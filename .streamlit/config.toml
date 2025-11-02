@@ -1,0 +1,23 @@
+[global]
+
+# Desactiva algunos warnings para una mejor experiencia
+developmentMode = false
+
+[server]
+# Configuración del servidor
+headless = true
+port = 8501
+enableCORS = true
+enableXsrfProtection = false
+
+[browser]
+# Configuración del navegador
+gatherUsageStats = false
+
+[theme]
+# Tema personalizado
+primaryColor = "#FF6B6B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"

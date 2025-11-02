@@ -1,0 +1,184 @@
+"""
+Definición de modelos para TinySpeak
+"""
+import torch
+import torch.nn.functional as F
+from torch.nn import Module, LSTM, Linear, Sequential, ReLU, AdaptiveAvgPool2d, Conv2d, MaxPool2d
+from torch.nn.utils.rnn import PackedSequence, pack_padded_sequence, pad_sequence
+from transformers import Wav2Vec2Model, Wav2Vec2Config
+from collections import OrderedDict
+import torch.nn as nn
+
+class Flatten(nn.Module):
+    """Helper module for flattening input tensor to 1-D for the use in Linear modules"""
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+class Identity(nn.Module):
+    """Helper module that stores the current tensor. Useful for accessing by name"""
+    def forward(self, x):
+        return x
+
+class CORblock_Z(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
+                              stride=stride, padding=kernel_size // 2)
+        self.nonlin = nn.ReLU(inplace=True)
+        self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.output = Identity()  # for an easy access to this block's output
+
+    def forward(self, inp):
+        x = self.conv(inp)
+        x = self.nonlin(x)
+        x = self.pool(x)
+        x = self.output(x)  # for an easy access to this block's output
+        return x
+
+def CORnet_Z():
+    model = nn.Sequential(OrderedDict([
+        ('V1', CORblock_Z(3, 64, kernel_size=7, stride=2)),
+        ('V2', CORblock_Z(64, 128)),
+        ('V4', CORblock_Z(128, 256)),
+        ('IT', CORblock_Z(256, 512)),
+        ('decoder', nn.Sequential(OrderedDict([
+            ('avgpool', nn.AdaptiveAvgPool2d(1)),
+            ('flatten', Flatten()),
+            ('linear', nn.Linear(512, 1000)),
+            ('output', Identity())
+        ])))
+    ]))
+
+    # weight initialization
+    for m in model.modules():
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()
+
+    return model
+
+class TinySpeak(Module):
+    def __init__(self, words: list, hidden_dim=128, num_layers=2, wav2vec_dim=768):
+        super().__init__()
+        self.words = words
+        self.hidden_dim = hidden_dim
+        self.lstm = LSTM(
+            input_size=wav2vec_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True
+        )
+        self.classifier = Linear(hidden_dim, len(words))
+
+    def forward(self, packed_sequence: PackedSequence):
+        _, (h_n, _) = self.lstm(packed_sequence)
+        logits = self.classifier(h_n[-1])
+        return logits, h_n
+
+class TinyListener(Module):
+    def __init__(self, tiny_speak: TinySpeak, wav2vec_model, wav2vec_target_layer=5):
+        super().__init__()
+        self.tiny_speak = tiny_speak
+        self.wav2vec_model = wav2vec_model
+        self.wav2vec_target_layer = wav2vec_target_layer
+
+    def extract_hidden_activations(self, waveforms):
+        B = len(waveforms)
+        padded = pad_sequence(waveforms, batch_first=True).to(waveforms[0].device)
+        lengths = torch.tensor([w.size(0) for w in waveforms], device=waveforms[0].device)
+        arange = torch.arange(padded.size(1), device=waveforms[0].device)
+        mask = (arange.unsqueeze(0) < lengths.unsqueeze(1)).long()
+        
+        self.wav2vec_model.eval()
+        with torch.no_grad():
+            out = self.wav2vec_model(padded, attention_mask=mask)
+        return torch.stack(out.hidden_states, dim=0)
+
+    def mask_hidden_activations(self, hidden_activations):
+        hidden = hidden_activations[self.wav2vec_target_layer]  # → (B, T_hidden, D)
+        B, T_hidden, D = hidden.shape
+        device = hidden.device
+        lengths = torch.full((B,), T_hidden, dtype=torch.long, device=device)
+        return hidden.unsqueeze(0), lengths
+
+    def downsample_hidden_activations(self, hidden_activations, lengths, factor=7):
+        B, L, N, D = hidden_activations.shape
+        N_target = N // factor
+        hidden_activations = hidden_activations.reshape(B * L, N, D).transpose(1, 2)
+        hidden_activations = F.interpolate(hidden_activations, size=N_target, mode="linear", align_corners=False)
+        hidden_activations = hidden_activations.transpose(1, 2).reshape(B, L, N_target, D)
+        lengths = torch.div(lengths, factor, rounding_mode='floor')
+        return hidden_activations, lengths
+
+    def forward(self, waveform):
+        """
+        waveform: FloatTensor of shape (B, T_max, input_dim) or list of tensors
+        """
+        if isinstance(waveform, torch.Tensor):
+            waveforms = [waveform[i] for i in range(waveform.size(0))]
+        else:
+            waveforms = waveform
+            
+        hidden_activations = self.extract_hidden_activations(waveforms)
+        hidden_activations, lengths = self.mask_hidden_activations(hidden_activations)
+        hidden_activations, lengths = self.downsample_hidden_activations(hidden_activations, lengths, factor=7)
+        hidden_activations = hidden_activations.squeeze(0)
+        
+        # Pack the padded batch
+        packed = pack_padded_sequence(
+            hidden_activations, lengths.cpu(), batch_first=True, enforce_sorted=False
+        )
+        return self.tiny_speak(packed)
+
+class TinyRecognizer(Module):
+    def __init__(self, wav2vec_dim=768):
+        super().__init__()
+        self.cornet = CORnet_Z()
+        self.cornet.decoder = Sequential(OrderedDict([
+            ('avgpool', AdaptiveAvgPool2d((1, 1))),
+            ('flatten', Flatten()),
+            ('linear_input', Linear(512, 1024)),
+            ('relu', ReLU()),
+            ('linear_ouput', Linear(1024, wav2vec_dim)),
+        ]))
+        self.classifier = Linear(wav2vec_dim, 26)  # 26 letters
+
+    def forward(self, x):
+        predicted_embedding = self.cornet(x)
+        detached_embedding = predicted_embedding.detach()
+        logits = self.classifier(detached_embedding)
+        return logits, predicted_embedding
+
+class TinySpeller(Module):
+    def __init__(self, tiny_recognizer: TinyRecognizer, tiny_speak: TinySpeak):
+        super().__init__()
+        self.tiny_recognizer = tiny_recognizer
+        self.tiny_speak = tiny_speak
+
+        self.tiny_recognizer.eval()
+        for param in self.tiny_recognizer.parameters():
+            param.requires_grad = False
+
+    def forward(self, x):
+        """
+        x: Tensor (batch_size, seq_len, C, H, W)
+        """
+        batch_size, seq_len, C, H, W = x.size()
+        predicted_embeddings = []
+
+        # Embed each letter image in the sequence
+        for t in range(seq_len):
+            x_t = x[:, t, :, :, :]
+            _, predicted_embedding = self.tiny_recognizer(x_t)
+            predicted_embeddings.append(predicted_embedding.unsqueeze(1))
+
+        embs = torch.cat(predicted_embeddings, dim=1)  # (batch, seq_len, dim_embeddings)
+        lengths = [seq_len] * batch_size
+        packed = pack_padded_sequence(
+            embs, lengths, batch_first=True, enforce_sorted=False
+        )
+        return self.tiny_speak(packed)
