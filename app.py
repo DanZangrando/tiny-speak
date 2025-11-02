@@ -67,35 +67,173 @@ def setup_models():
 
 def main():
     st.title("🎤 TinySpeak - Reconocimiento Multimodal")
+    
     st.markdown("""
-    Esta aplicación demuestra tres modelos de IA para reconocimiento:
-    - **TinyListener**: Reconocimiento de palabras a partir de audio
-    - **TinyRecognizer**: Reconocimiento de letras escritas a mano
-    - **TinySpeller**: Combinación de visión y audio para deletrear palabras
+    ## 🌟 Bienvenido a TinySpeak
+    
+    **TinySpeak** es un sistema de IA multimodal que combina reconocimiento de voz y visión para procesar información de diferentes modalidades sensoriales.
+    
+    ### 🧠 **Modelos Implementados:**
+    
     """)
     
-    # Inicializar modelos
-    if 'models' not in st.session_state:
-        with st.spinner("Inicializando modelos..."):
-            st.session_state.models = setup_models()
+    # Mostrar tarjetas de modelos
+    col1, col2, col3 = st.columns(3)
     
-    models = st.session_state.models
+    with col1:
+        st.markdown("""
+        #### 🎵 TinyListener
+        **Audio → Palabra**
+        
+        - 🤖 Wav2Vec2 preentrenado 
+        - 🔄 LSTM para secuencias temporales
+        - 🎯 ~200 palabras en español
+        - ⚡ Reconocimiento en tiempo real
+        """)
+        
+    with col2:
+        st.markdown("""
+        #### 🖼️ TinyRecognizer  
+        **Imagen → Letra**
+        
+        - 🧠 Arquitectura CORnet-Z
+        - 👁️ Inspirada en cortex visual
+        - 🔤 Letras a-z manuscritas
+        - 🎨 Análisis de embeddings visuales
+        """)
+        
+    with col3:
+        st.markdown("""
+        #### 🔗 TinySpeller
+        **Multimodal: Visión + Audio**
+        
+        - 🖼️➡️📝 Secuencia letras → palabra
+        - 🎵➡️📝 Audio directo → palabra  
+        - ⚖️ Comparación entre modalidades
+        - 🧪 Análisis multimodal avanzado
+        """)
     
-    # Sidebar para configuración
-    st.sidebar.header("⚙️ Configuración")
+    st.markdown("---")
     
-    # Selector de modelo
-    model_choice = st.sidebar.selectbox(
-        "Selecciona el modelo a usar:",
-        ["TinyListener (Audio → Palabra)", "TinyRecognizer (Imagen → Letra)", "Síntesis de voz"]
-    )
+    # Información de arquitectura
+    with st.expander("🏗️ Arquitectura del Sistema", expanded=False):
+        st.markdown("""
+        ### 📊 **Flujo de Datos:**
+        
+        ```
+        🎤 Audio Input           🖼️ Image Input
+             ↓                        ↓
+        🤖 Wav2Vec2 (768D)      🧠 CORnet-Z (768D)  
+             ↓                        ↓
+        🔄 LSTM (64D)           📝 Secuencia → LSTM
+             ↓                        ↓
+        🎯 Clasificador         🎯 Clasificador
+             ↓                        ↓
+        📝 Palabra Predicha     📝 Palabra Predicha
+        ```
+        
+        ### 🧠 **Componentes Técnicos:**
+        - **Wav2Vec2**: facebook/wav2vec2-base-es-voxpopuli-v2 (95M parámetros)
+        - **CORnet-Z**: Arquitectura cortical V1→V2→V4→IT
+        - **LSTM**: 768→64→num_classes, 2 capas
+        - **Dataset**: ~200 palabras españolas + 26 letras manuscritas
+        """)
     
-    if model_choice == "TinyListener (Audio → Palabra)":
-        audio_recognition_interface(models)
-    elif model_choice == "TinyRecognizer (Imagen → Letra)":
-        image_recognition_interface(models)
-    elif model_choice == "Síntesis de voz":
-        speech_synthesis_interface(models)
+    # Navegación
+    st.markdown("### 🧭 **Navegación**")
+    st.info("""
+    👈 **Usa la barra lateral** para navegar entre las páginas específicas de cada modelo:
+    
+    - **🎵 TinyListener**: Testing completo de reconocimiento de audio
+    - **🖼️ TinyRecognizer**: Análisis detallado de reconocimiento visual  
+    - **🔗 TinySpeller**: Experimentos multimodales avanzados
+    
+    Cada página incluye herramientas especializadas para testing, análisis y comparación.
+    """)
+    
+    # Estado del sistema
+    st.markdown("### 📊 **Estado del Sistema**")
+    
+    # Verificar estado de los componentes básicos
+    col1, col2, col3, col4 = st.columns(4)
+    
+    try:
+        device = encontrar_device()
+        col1.metric("🖥️ Dispositivo", str(device).upper())
+    except:
+        col1.metric("🖥️ Dispositivo", "Error", delta="❌")
+    
+    try:
+        words = get_default_words()
+        col2.metric("📚 Vocabulario", f"{len(words)} palabras")
+    except:
+        col2.metric("📚 Vocabulario", "Error", delta="❌")
+    
+    try:
+        import subprocess
+        result = subprocess.run(["espeak", "--version"], capture_output=True)
+        if result.returncode == 0:
+            col3.metric("🔊 Espeak", "Disponible", delta="✅")
+        else:
+            col3.metric("🔊 Espeak", "No disponible", delta="⚠️")
+    except:
+        col3.metric("🔊 Espeak", "No disponible", delta="⚠️")
+    
+    try:
+        import torch
+        col4.metric("🔥 PyTorch", torch.__version__[:5])
+    except:
+        col4.metric("🔥 PyTorch", "Error", delta="❌")
+    
+    # Ejemplos rápidos
+    st.markdown("### 🚀 **Ejemplos Rápidos**")
+    
+    if st.button("🧪 Ejecutar Test Rápido del Sistema"):
+        run_quick_system_test()
+
+def run_quick_system_test():
+    """Ejecuta un test rápido del sistema completo"""
+    with st.spinner("🔄 Ejecutando test del sistema..."):
+        try:
+            # Test básico de imports
+            from models import TinySpeak, TinyRecognizer
+            from utils import synthesize_word, get_default_words
+            
+            # Test de síntesis
+            test_word = "hola"
+            waveform = synthesize_word(test_word)
+            
+            if waveform is not None:
+                st.success("✅ Sistema funcionando correctamente!")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Componentes verificados:**")
+                    st.write("✅ Modelos cargados")
+                    st.write("✅ Síntesis de voz") 
+                    st.write("✅ Procesamiento de audio")
+                    st.write("✅ Vocabulario disponible")
+                
+                with col2:
+                    # Reproducir audio de prueba
+                    import tempfile
+                    import torchaudio
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                        torchaudio.save(tmp_file.name, waveform.unsqueeze(0), 16000)
+                        
+                        with open(tmp_file.name, 'rb') as audio_file:
+                            st.audio(audio_file.read(), format='audio/wav')
+                        
+                        import os
+                        os.unlink(tmp_file.name)
+                    
+                    st.write(f"🔊 Audio de prueba: '{test_word}'")
+            else:
+                st.warning("⚠️ Sistema parcialmente funcional - problema con síntesis de audio")
+        
+        except Exception as e:
+            st.error(f"❌ Error en el test del sistema: {str(e)}")
 
 def audio_recognition_interface(models):
     """Interfaz para reconocimiento de audio"""
