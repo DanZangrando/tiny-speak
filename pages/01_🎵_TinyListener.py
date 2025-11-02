@@ -14,8 +14,9 @@ from pathlib import Path
 # Importar módulos
 from models import TinySpeak, TinyListener
 from utils import (
-    encontrar_device, load_wav2vec_model, load_waveform, plot_waveform, 
-    plot_logits, get_default_words, synthesize_word, WAV2VEC_SR, WAV2VEC_DIM
+    encontrar_device, load_wav2vec_model, load_waveform, plot_waveform_native, 
+    plot_logits_native, get_default_words, synthesize_word, save_waveform_to_audio_file,
+    WAV2VEC_SR, WAV2VEC_DIM
 )
 
 # Configurar página
@@ -174,8 +175,10 @@ def test_synthesis_and_recognition(models):
         
         amplitude = st.slider("Volumen", 50, 200, 120)
         
-        if st.button("🎵 Sintetizar y Analizar", type="primary"):
-            synthesize_and_analyze(text_input, rate, pitch, amplitude, models)
+        if st.button("🎵 Sintetizar y Analizar", type="primary", key="synthesize_btn"):
+            with st.spinner("Sintetizando y analizando..."):
+                synthesize_and_analyze(text_input, rate, pitch, amplitude, models)
+                st.rerun()
     
     with col2:
         st.markdown("#### 📊 Resultados del Test")
@@ -234,8 +237,8 @@ def analyze_audio_file(audio_file, models):
         
         if waveform is not None:
             # Mostrar waveform
-            fig = plot_waveform(waveform, "Audio Cargado")
-            st.pyplot(fig)
+            fig = plot_waveform_native(waveform, "Audio Cargado")
+            st.plotly_chart(fig, use_container_width=True)
             
             # Hacer predicción
             device = models['device']
@@ -294,18 +297,22 @@ def synthesize_and_analyze(text, rate, pitch, amplitude, models):
 def display_synthesis_results(results):
     """Muestra resultados de síntesis"""
     # Audio sintetizado
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-        import torchaudio
-        torchaudio.save(tmp_file.name, results['waveform'].unsqueeze(0), WAV2VEC_SR)
-        
-        with open(tmp_file.name, 'rb') as audio_file:
-            st.audio(audio_file.read(), format='audio/wav')
-        
-        os.unlink(tmp_file.name)
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            if save_waveform_to_audio_file(results['waveform'], tmp_file.name, WAV2VEC_SR):
+                with open(tmp_file.name, 'rb') as audio_file:
+                    st.audio(audio_file.read(), format='audio/wav')
+            else:
+                st.warning("⚠️ No se pudo guardar el archivo de audio")
+            
+            os.unlink(tmp_file.name)
+    
+    except Exception as e:
+        st.warning(f"⚠️ No se puede reproducir el audio: {str(e)}")
     
     # Waveform
-    fig = plot_waveform(results['waveform'], f"Síntesis: '{results['text']}'")
-    st.pyplot(fig)
+    fig = plot_waveform_native(results['waveform'], f"Síntesis: '{results['text']}'")
+    st.plotly_chart(fig, use_container_width=True)
     
     # Predicción
     if results['prediction'].lower() == results['text'].lower():
@@ -337,8 +344,8 @@ def display_prediction_results(logits, models, hidden_states=None):
     
     with col2:
         # Gráfico de logits
-        fig = plot_logits(logits.squeeze().cpu().numpy(), models['words'], "Distribución de Predicciones")
-        st.pyplot(fig)
+        fig = plot_logits_native(logits, models['words'], "Distribución de Predicciones")
+        st.plotly_chart(fig, use_container_width=True)
 
 def analyze_specific_word(word, models):
     """Análiza una palabra específica del vocabulario"""
@@ -350,14 +357,17 @@ def analyze_specific_word(word, models):
             st.success(f"✅ Palabra sintetizada: **{word}**")
             
             # Audio
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-                import torchaudio
-                torchaudio.save(tmp_file.name, waveform.unsqueeze(0), WAV2VEC_SR)
-                
-                with open(tmp_file.name, 'rb') as audio_file:
-                    st.audio(audio_file.read(), format='audio/wav')
-                
-                os.unlink(tmp_file.name)
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                    if save_waveform_to_audio_file(waveform, tmp_file.name, WAV2VEC_SR):
+                        with open(tmp_file.name, 'rb') as audio_file:
+                            st.audio(audio_file.read(), format='audio/wav')
+                    else:
+                        st.warning("⚠️ No se pudo guardar el archivo de audio")
+                    
+                    os.unlink(tmp_file.name)
+            except Exception as e:
+                st.warning(f"⚠️ No se puede reproducir el audio: {str(e)}")
             
             # Análisis
             device = models['device']

@@ -16,7 +16,7 @@ from torchvision.transforms import Compose, ToTensor, Resize, Normalize
 from models import TinySpeak, TinyListener, TinyRecognizer, TinySpeller
 from utils import (
     encontrar_device, load_wav2vec_model, get_default_words, 
-    synthesize_word, WAV2VEC_SR, WAV2VEC_DIM, LETTERS
+    synthesize_word, save_waveform_to_audio_file, WAV2VEC_SR, WAV2VEC_DIM, LETTERS
 )
 
 # Configurar página
@@ -429,14 +429,17 @@ def display_audio_results(results):
     
     # Reproducir audio
     if results['source'] == 'synthesis':
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-            import torchaudio
-            torchaudio.save(tmp_file.name, results['waveform'].unsqueeze(0), WAV2VEC_SR)
-            
-            with open(tmp_file.name, 'rb') as audio_file:
-                st.audio(audio_file.read(), format='audio/wav')
-            
-            os.unlink(tmp_file.name)
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                if save_waveform_to_audio_file(results['waveform'], tmp_file.name, WAV2VEC_SR):
+                    with open(tmp_file.name, 'rb') as audio_file:
+                        st.audio(audio_file.read(), format='audio/wav')
+                else:
+                    st.warning("⚠️ No se pudo guardar el archivo de audio")
+                
+                os.unlink(tmp_file.name)
+        except Exception as e:
+            st.warning(f"⚠️ No se puede reproducir el audio: {str(e)}")
     
     # Resultados
     if results['correct'] is not None:

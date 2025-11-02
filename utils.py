@@ -201,6 +201,116 @@ def ensure_data_downloaded():
     
     return data_path
 
+def save_waveform_to_audio_file(waveform, file_path, sample_rate=16000):
+    """
+    Guarda un waveform como archivo de audio con fallback robusto
+    """
+    try:
+        # Intentar con torchaudio primero
+        import torchaudio
+        if len(waveform.shape) == 1:
+            waveform = waveform.unsqueeze(0)
+        torchaudio.save(file_path, waveform, sample_rate)
+        return True
+    except Exception:
+        try:
+            # Fallback con soundfile
+            import soundfile as sf
+            waveform_np = waveform.cpu().numpy() if hasattr(waveform, 'cpu') else waveform
+            if len(waveform_np.shape) > 1:
+                waveform_np = waveform_np.squeeze()
+            sf.write(file_path, waveform_np, sample_rate)
+            return True
+        except Exception as e:
+            print(f"Error guardando audio: {e}")
+            return False
+
+def plot_waveform_native(waveform, title="Waveform", sample_rate=16000):
+    """
+    Crea un gráfico nativo de Streamlit para el waveform usando plotly
+    """
+    import streamlit as st
+    import plotly.graph_objects as go
+    import numpy as np
+    
+    # Convertir a numpy si es tensor
+    if hasattr(waveform, 'cpu'):
+        waveform_np = waveform.cpu().numpy()
+    else:
+        waveform_np = np.array(waveform)
+    
+    if len(waveform_np.shape) > 1:
+        waveform_np = waveform_np.squeeze()
+    
+    # Crear eje de tiempo
+    time_axis = np.linspace(0, len(waveform_np) / sample_rate, len(waveform_np))
+    
+    # Crear gráfico
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=time_axis,
+        y=waveform_np,
+        mode='lines',
+        name='Waveform',
+        line=dict(color='#FF6B6B', width=1)
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Tiempo (s)',
+        yaxis_title='Amplitud',
+        height=300,
+        template='plotly_dark',
+        showlegend=False
+    )
+    
+    return fig
+
+def plot_logits_native(logits, words, title="Predicciones del Modelo"):
+    """
+    Crea un gráfico nativo de Streamlit para logits usando plotly
+    """
+    import streamlit as st
+    import plotly.graph_objects as go
+    import torch
+    import numpy as np
+    
+    # Convertir logits a probabilidades
+    if isinstance(logits, torch.Tensor):
+        probs = torch.softmax(logits, dim=-1)
+        probs_np = probs.cpu().numpy().squeeze()
+    else:
+        probs_np = np.array(logits)
+    
+    # Obtener top 10 predicciones
+    top_indices = np.argsort(probs_np)[-10:][::-1]
+    top_words = [words[i] for i in top_indices]
+    top_probs = probs_np[top_indices]
+    
+    # Crear gráfico de barras
+    fig = go.Figure(data=[
+        go.Bar(
+            y=top_words,
+            x=top_probs,
+            orientation='h',
+            marker=dict(
+                color=top_probs,
+                colorscale='Viridis',
+                colorbar=dict(title="Probabilidad")
+            )
+        )
+    ])
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Probabilidad',
+        yaxis_title='Palabras',
+        height=400,
+        template='plotly_dark'
+    )
+    
+    return fig
+
 def get_default_words():
     """Retorna la lista de palabras por defecto para el modelo"""
     try:

@@ -7,7 +7,7 @@ import streamlit as st
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import string
 from torchvision.transforms import Compose, ToTensor, Resize, Normalize
 
