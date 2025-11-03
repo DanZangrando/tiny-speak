@@ -19,6 +19,12 @@ from utils import (
     synthesize_word, save_waveform_to_audio_file, WAV2VEC_SR, WAV2VEC_DIM, LETTERS
 )
 
+# Importar sidebar moderna
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from components.modern_sidebar import display_modern_sidebar
+
 # Configurar página
 st.set_page_config(
     page_title="TinySpeller - Multimodal AI",
@@ -58,6 +64,9 @@ def load_multimodal_models():
     }
 
 def main():
+    # Sidebar modernizada persistente
+    display_modern_sidebar()
+    
     st.title("🔗 TinySpeller - Reconocimiento Multimodal")
     
     # Información del modelo

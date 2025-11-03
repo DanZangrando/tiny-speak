@@ -19,6 +19,12 @@ from utils import (
     WAV2VEC_SR, WAV2VEC_DIM
 )
 
+# Importar sidebar moderna
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from components.modern_sidebar import display_modern_sidebar
+
 # Configurar página
 st.set_page_config(
     page_title="TinyListener - Audio Recognition",
@@ -48,6 +54,9 @@ def load_audio_models():
     }
 
 def main():
+    # Sidebar modernizada persistente
+    display_modern_sidebar()
+    
     st.title("🎵 TinyListener - Reconocimiento de Audio")
     
     # Información del modelo
@@ -238,7 +247,7 @@ def analyze_audio_file(audio_file, models):
         if waveform is not None:
             # Mostrar waveform
             fig = plot_waveform_native(waveform, "Audio Cargado")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             # Hacer predicción
             device = models['device']
@@ -312,7 +321,7 @@ def display_synthesis_results(results):
     
     # Waveform
     fig = plot_waveform_native(results['waveform'], f"Síntesis: '{results['text']}'")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Predicción
     if results['prediction'].lower() == results['text'].lower():
@@ -345,7 +354,7 @@ def display_prediction_results(logits, models, hidden_states=None):
     with col2:
         # Gráfico de logits
         fig = plot_logits_native(logits, models['words'], "Distribución de Predicciones")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 def analyze_specific_word(word, models):
     """Análiza una palabra específica del vocabulario"""

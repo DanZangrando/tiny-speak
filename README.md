@@ -1,31 +1,49 @@
-# TinySpeak - Aplicación de Reconocimiento Multimodal
+# TinySpeak - Sistema Multimodal de Reconocimiento de Voz y Visión
 
-Esta aplicación de Streamlit implementa los modelos desarrollados en el notebook `tiny_speak.ipynb` para reconocimiento de voz y visión.
+TinySpeak es una aplicación completa de Streamlit que combina reconocimiento de voz y visión con capacidades de generación de datasets personalizados.
 
-## 🚀 Características
+## 🚀 Características Principales
 
-- **TinyListener**: Reconocimiento de palabras a partir de audio usando Wav2Vec2
-- **TinyRecognizer**: Reconocimiento de letras escritas a mano
-- **Síntesis de Voz**: Generación de audio con espeak y análisis automático
+### 🧠 Modelos de IA
+- **TinyListener**: Reconocimiento de palabras usando Wav2Vec2 + LSTM
+- **TinyRecognizer**: Reconocimiento de letras manuscritas con arquitectura CORnet-Z
+- **TinySpeller**: Sistema multimodal que combina audio y visión
 
-## 📋 Requisitos
+### � Gestión de Vocabularios
+- **Diccionarios Predefinidos**: Incluye vocabularios originales (Kalulu, Phones) y temáticos
+- **Diccionarios Personalizados**: Crea vocabularios propios palabra por palabra
+- **Sincronización Automática**: Configuración centralizada para todos los datasets
+
+### 🎵 Generación de Audio (gTTS)
+- **Síntesis con Google Text-to-Speech**: Calidad superior a espeak
+- **Variaciones Automáticas**: 6 tipos (original, velocidad, volumen, normalizado)
+- **Conversión a WAV**: Procesamiento automático para compatibilidad
+- **Sistema de Verificación**: Reproduce y valida cada muestra generada
+
+### 🖼️ Generación de Imágenes
+- **Letras Sintéticas**: Genera imágenes de letras con múltiples fuentes
+- **Variaciones de Estilo**: Diferentes tipos de letra, tamaños y efectos
+- **Dataset Visual Completo**: Para entrenar reconocimiento de caracteres
+
+### 📊 Dashboard Inteligente
+- **Métricas Dinámicas**: Estado real de datasets (no estático)
+- **Validación de Consistencia**: Verifica sincronización entre configuración y datasets
+- **Interfaz Moderna**: Tema oscuro con componentes glassmorfismo
+
+## 📋 Requisitos del Sistema
 
 - Python 3.8+
 - Entorno virtual configurado
-- espeak (para síntesis de voz)
+- Conexión a internet (para gTTS)
 
-### Instalación de espeak
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install espeak
-
-# macOS
-brew install espeak
-
-# Windows
-# Descargar desde: http://espeak.sourceforge.net/download.html
-```
+### Dependencias Principales
+- **Streamlit**: Framework web para la aplicación
+- **PyTorch**: Modelos de deep learning
+- **Transformers**: Modelo Wav2Vec2 de Hugging Face
+- **gTTS**: Google Text-to-Speech para síntesis de audio
+- **Plotly**: Gráficos interactivos nativos
+- **Pillow**: Procesamiento de imágenes
+- **librosa/torchaudio**: Procesamiento de audio
 
 ## 🛠️ Instalación
 

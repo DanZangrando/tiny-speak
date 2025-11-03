@@ -15,6 +15,12 @@ from torchvision.transforms import Compose, ToTensor, Resize, Normalize
 from models import TinyRecognizer, CORnet_Z
 from utils import encontrar_device, WAV2VEC_DIM, LETTERS
 
+# Importar sidebar moderna
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from components.modern_sidebar import display_modern_sidebar
+
 # Configurar página
 st.set_page_config(
     page_title="TinyRecognizer - Image Recognition",
@@ -37,6 +43,9 @@ def load_vision_models():
     }
 
 def main():
+    # Sidebar modernizada persistente
+    display_modern_sidebar()
+    
     st.title("🖼️ TinyRecognizer - Reconocimiento de Letras")
     
     # Información del modelo
@@ -458,7 +467,7 @@ def display_systematic_results(results):
             'confidence_pct': 'Confianza',
             'status': 'Estado'
         }),
-        use_container_width=True
+        width='stretch'
     )
     
     # Matriz de confusión simple
