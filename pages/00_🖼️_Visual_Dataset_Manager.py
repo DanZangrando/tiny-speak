@@ -82,29 +82,43 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def load_master_config():
-    """Cargar configuración desde master_dataset_config.json"""
-    config_file = "../master_dataset_config.json"
+    """Cargar configuración desde master_dataset_config.json PRESERVANDO todo el contenido existente"""
+    # Usar ruta absoluta basada en la ubicación del archivo actual
+    current_dir = Path(__file__).parent.parent
+    config_file = current_dir / "master_dataset_config.json"
     
-    if os.path.exists(config_file):
+    if config_file.exists():
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
-            # Asegurar que existe la sección visual
+            # Asegurar que existe la sección visual SIN sobrescribir
             if 'visual_dataset' not in config:
-                config['visual_dataset'] = {
-                    "name": "Visual Dataset TinySpeak",
-                    "letters": list(string.ascii_lowercase),
-                    "vocabulary": config.get('master_config_reference', 'casa_familia'),  # Sincronizar con master
-                    "fonts": ["arial.ttf", "times.ttf", "calibri.ttf"],
-                    "font_sizes": [20, 24, 28, 32, 36, 40],
-                    "rotation_range": 15,
-                    "noise_levels": [0.0, 0.1, 0.2, 0.3],
-                    "image_size": [64, 64],
-                    "generated_images": {},
-                    "version": "2.0",
-                    "created": datetime.now().isoformat()
-                }
+                config['visual_dataset'] = {}
+            
+            # Solo agregar campos que no existen, preservando los existentes
+            visual_defaults = {
+                "name": "Visual Dataset TinySpeak",
+                "letters": list(string.ascii_lowercase),
+                "vocabulary": config.get('diccionario_seleccionado', config.get('master_config_reference', 'casa_familia')),
+                "fonts": ["arial.ttf", "times.ttf", "calibri.ttf"],
+                "font_sizes": [20, 24, 28, 32, 36, 40],
+                "rotation_range": 15,
+                "noise_levels": [0.0, 0.1, 0.2, 0.3],
+                "image_size": [64, 64],
+                "generated_images": {},
+                "version": "2.0"
+            }
+            
+            config_changed = False
+            for key, default_value in visual_defaults.items():
+                if key not in config['visual_dataset']:
+                    config['visual_dataset'][key] = default_value
+                    config_changed = True
+            
+            # Solo guardar si hubo cambios
+            if config_changed:
+                st.info("🔧 Agregando configuración visual faltante (preservando datos existentes)")
                 save_master_config(config)
             
             return config
@@ -116,11 +130,15 @@ def load_master_config():
         return create_default_master_config()
 
 def create_default_master_config():
-    """Crea configuración maestra por defecto"""
+    """Crea configuración maestra por defecto SOLO si no existe archivo"""
+    st.warning("⚠️ No se encontró master_dataset_config.json. Creando configuración básica.")
+    st.info("💡 Recomendación: Configura primero el diccionario y parámetros desde las otras páginas.")
+    
     config = {
         "master_config_reference": "casa_familia",
+        "diccionario_seleccionado": "casa_familia",
         "visual_dataset": {
-            "name": "Visual Dataset TinySpeak",
+            "name": "Visual Dataset TinySpeak", 
             "letters": list(string.ascii_lowercase),
             "vocabulary": "casa_familia",
             "fonts": ["arial.ttf", "times.ttf", "calibri.ttf"],
@@ -137,12 +155,41 @@ def create_default_master_config():
     save_master_config(config)
     return config
 
+def clean_config_for_json(obj):
+    """Limpia recursivamente el config para que sea serializable a JSON"""
+    if isinstance(obj, dict):
+        cleaned = {}
+        for key, value in obj.items():
+            # Evitar guardar objetos Image y otros no serializables
+            if key in ['image_objects', 'preview_images']:
+                continue
+            cleaned[key] = clean_config_for_json(value)
+        return cleaned
+    elif isinstance(obj, list):
+        return [clean_config_for_json(item) for item in obj]
+    elif hasattr(obj, '__module__') and 'PIL' in str(type(obj)):
+        # Si es un objeto PIL Image, no lo incluimos
+        return None
+    elif isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    else:
+        # Para cualquier otro tipo, intentar convertir a string
+        try:
+            return str(obj) if obj is not None else None
+        except:
+            return None
+
 def save_master_config(config):
     """Guardar configuración a master_dataset_config.json"""
     try:
-        config_file = "../master_dataset_config.json"
+        # Limpiar config antes de guardar
+        clean_config = clean_config_for_json(config)
+        
+        # Usar ruta absoluta basada en la ubicación del archivo actual
+        current_dir = Path(__file__).parent.parent
+        config_file = current_dir / "master_dataset_config.json"
         with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False, default=str)
+            json.dump(clean_config, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
         st.error(f"Error guardando configuración: {e}")
@@ -255,16 +302,208 @@ def generate_letter_image(letter, font_size=32, rotation=0, noise_level=0.0, fon
         st.error(f"Error generando imagen para '{letter}': {e}")
         return None
 
-def image_to_base64(image):
-    """Convierte imagen PIL a base64"""
+def save_image_to_file(image, letter, params, dataset_dir="visual_dataset"):
+    """Guarda imagen como archivo PNG y retorna metadatos"""
     try:
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        img_base64 = base64.b64encode(buffer.getvalue()).decode()
-        return img_base64
+        # Crear estructura de carpetas: visual_dataset/letra/
+        current_dir = Path(__file__).parent.parent
+        letter_dir = current_dir / dataset_dir / letter.lower()
+        letter_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generar nombre único basado en parámetros y timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        font_name = params.get('font', 'arial').replace(' ', '_').replace('.ttf', '').lower()
+        filename = f"{letter.lower()}_{font_name}_fs{params.get('font_size', 32)}_r{params.get('rotation', 0):.1f}_n{params.get('noise_level', 0):.3f}_{timestamp}.jpg"
+        
+        image_path = letter_dir / filename
+        
+        # Convertir a RGB si es necesario (JPEG no soporta transparencia)
+        if image.mode in ('RGBA', 'LA', 'P'):
+            # Crear fondo blanco
+            bg = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            bg.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+            image = bg
+        
+        # Guardar imagen como JPEG optimizado para AI
+        image.save(image_path, format='JPEG', quality=85, optimize=True)
+        
+        # Retornar metadatos
+        return {
+            'file_path': str(image_path.relative_to(current_dir)),  # Ruta relativa para portabilidad
+            'filename': filename,
+            'letter': letter.upper(),
+            'params': params.copy(),  # Hacer copia para evitar referencias
+            'created': datetime.now().isoformat(),
+            'size': list(image.size),  # Convertir tuple a list para JSON
+            'format': 'JPEG'
+        }
+        
     except Exception as e:
-        st.error(f"Error convirtiendo imagen a base64: {e}")
+        st.error(f"Error guardando imagen: {e}")
         return None
+
+def load_image_from_metadata(metadata, base_dir=None):
+    """Carga imagen desde metadatos"""
+    try:
+        if base_dir is None:
+            base_dir = Path(__file__).parent.parent
+        
+        image_path = base_dir / metadata['file_path']
+        if image_path.exists():
+            return Image.open(image_path)
+        else:
+            st.warning(f"Archivo de imagen no encontrado: {image_path}")
+            return None
+    except Exception as e:
+        st.error(f"Error cargando imagen: {e}")
+        return None
+
+def create_pytorch_dataset_structure(config, output_base_dir="visual_dataset"):
+    """Crear estructura de directorios compatible con PyTorch Dataset"""
+    base_path = Path(output_base_dir)
+    base_path.mkdir(exist_ok=True)
+    
+    # Crear directorios por letra
+    classes = []
+    for letter in config['alphabet'].keys():
+        letter_dir = base_path / letter
+        letter_dir.mkdir(exist_ok=True)
+        classes.append(letter)
+    
+    # Crear archivo de clases para PyTorch
+    classes_file = base_path / "classes.txt"
+    with open(classes_file, 'w', encoding='utf-8') as f:
+        for cls in sorted(classes):
+            f.write(f"{cls}\n")
+    
+    # Crear directorios de splits (train/val/test) si no existen
+    for split in ['train', 'val', 'test']:
+        split_dir = base_path / split
+        split_dir.mkdir(exist_ok=True)
+        for letter in classes:
+            (split_dir / letter).mkdir(exist_ok=True)
+    
+    return base_path
+
+def migrate_base64_to_files(config, output_dir="visual_dataset"):
+    """Migrar imágenes existentes de base64 a archivos de forma segura"""
+    migrated_count = 0
+    errors = []
+    base_path = Path(output_dir)
+    
+    # Crear copia de seguridad del config antes de la migración
+    backup_path = Path("master_dataset_config_pre_migration.json")
+    try:
+        import shutil
+        shutil.copy2("master_dataset_config.json", backup_path)
+        st.info(f"📋 Backup creado en: {backup_path}")
+    except Exception as e:
+        st.warning(f"⚠️ No se pudo crear backup: {str(e)}")
+    
+    # Buscar imágenes en diferentes secciones del config
+    sections_to_check = [
+        ('alphabet', 'variaciones'),
+        ('generated_samples', None),
+        ('visual_dataset.generated_images', None)
+    ]
+    
+    for section_path, sub_key in sections_to_check:
+        try:
+            # Navegar a la sección del config
+            current_data = config
+            for key in section_path.split('.'):
+                if key in current_data:
+                    current_data = current_data[key]
+                else:
+                    current_data = None
+                    break
+            
+            if not current_data:
+                continue
+                
+            # Procesar datos según el tipo
+            if isinstance(current_data, dict):
+                for letter, letter_data in current_data.items():
+                    if sub_key and sub_key in letter_data:
+                        # Caso: alphabet.variaciones
+                        images_list = letter_data[sub_key]
+                    elif isinstance(letter_data, list):
+                        # Caso: generated_samples o visual_dataset.generated_images
+                        images_list = letter_data
+                    else:
+                        continue
+                    
+                    if not images_list:
+                        continue
+                        
+                    # Crear directorio para la letra
+                    letter_dir = base_path / letter
+                    letter_dir.mkdir(exist_ok=True)
+                    
+                    # Procesar cada imagen
+                    for idx, img_data in enumerate(images_list):
+                        if not isinstance(img_data, dict):
+                            continue
+                            
+                        if 'image' in img_data and img_data['image'] and 'file_path' not in img_data:
+                            try:
+                                # Validar que no sea una cadena vacía
+                                if not img_data['image'].strip():
+                                    continue
+                                    
+                                # Decodificar imagen base64
+                                img_bytes = base64.b64decode(img_data['image'])
+                                img = Image.open(io.BytesIO(img_bytes))
+                                
+                                # Generar nombre de archivo único
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                                filename = f"{letter}_{timestamp}_{idx:03d}.jpg"
+                                file_path = letter_dir / filename
+                                
+                                # Convertir a RGB si es necesario (JPEG no soporta transparencia)
+                                if img.mode in ('RGBA', 'LA', 'P'):
+                                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                                    if img.mode == 'P':
+                                        img = img.convert('RGBA')
+                                    bg.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                                    img = bg
+                                
+                                # Guardar imagen como JPEG optimizado para AI
+                                img.save(file_path, format='JPEG', quality=85, optimize=True)
+                                
+                                # Actualizar metadatos de forma segura
+                                img_data['file_path'] = str(file_path)
+                                img_data['created_at'] = timestamp
+                                img_data['migrated_from'] = 'base64'
+                                
+                                # Verificar que el archivo se guardó correctamente
+                                if file_path.exists() and file_path.stat().st_size > 0:
+                                    # Solo eliminar base64 si el archivo se guardó exitosamente
+                                    del img_data['image']
+                                    migrated_count += 1
+                                else:
+                                    errors.append(f"Error: archivo {file_path} no se guardó correctamente")
+                                    
+                            except Exception as e:
+                                error_msg = f"Error migrando {section_path}.{letter}[{idx}]: {str(e)}"
+                                errors.append(error_msg)
+                                st.error(error_msg)
+                                
+        except Exception as e:
+            error_msg = f"Error procesando sección {section_path}: {str(e)}"
+            errors.append(error_msg)
+            st.error(error_msg)
+    
+    # Mostrar resumen
+    if errors:
+        st.warning(f"⚠️ {len(errors)} errores durante la migración")
+        with st.expander("Ver errores"):
+            for error in errors:
+                st.text(error)
+    
+    return migrated_count
 
 def main():
     # Mostrar sidebar moderna
@@ -471,7 +710,7 @@ def main():
         """, unsafe_allow_html=True)
         
         # Botón de generación
-        if st.button("🚀 **Generar Dataset Visual**", type="primary", use_container_width=True):
+        if st.button("🚀 **Generar Dataset Visual**", type="primary", width='stretch'):
             if not letters_to_generate:
                 st.error("⚠️ Selecciona al menos una letra para generar")
             elif not selected_fonts:
@@ -530,27 +769,33 @@ def generate_visual_dataset_new(letters, variations_per_letter, font_size_min, f
                 rotation = random.uniform(rotation_min, rotation_max)
                 noise_level = random.uniform(noise_min, noise_max)
                 
-                # Generar imagen
-                img_base64 = generate_letter_image(
+                # Generar imagen usando la función correcta
+                img = generate_letter_image(
                     letter, font_size, rotation, noise_level, font
                 )
                 
-                if img_base64:
-                    letter_data = {
-                        "image": img_base64,
-                        "params": {
-                            "font": font,
-                            "font_size": font_size,
-                            "rotation": rotation,
-                            "noise_level": noise_level,
-                            "size": [64, 64]
-                        },
-                        "letter": letter.upper(),
-                        "created": datetime.now().isoformat(),
-                        "language": language,
-                        "generation_method": "advanced_v2"
+                if img:
+                    # Preparar parámetros para guardar
+                    image_params = {
+                        "font": font,
+                        "font_size": font_size,
+                        "rotation": rotation,
+                        "noise_level": noise_level,
+                        "size": [64, 64]
                     }
-                    letter_images.append(letter_data)
+                    
+                    # Guardar imagen como archivo y obtener metadatos
+                    image_metadata = save_image_to_file(img, letter, image_params)
+                    
+                    if image_metadata:
+                        # Agregar información adicional de generación
+                        image_metadata.update({
+                            "letter": letter.upper(),
+                            "created": datetime.now().isoformat(),
+                            "language": language,
+                            "generation_method": "file_based_v3"  # Nuevo método
+                        })
+                        letter_images.append(image_metadata)
                 
                 current_operation += 1
                 progress_bar.progress(current_operation / total_operations)
@@ -601,7 +846,9 @@ def display_visual_dataset_preview(visual_config):
     
     st.markdown("### 👁️ Vista Previa del Dataset")
     
-    generated_images = visual_config.get('generated_images', {})
+    # Cargar master config para obtener las imágenes del lugar correcto
+    master_config = load_master_config()
+    generated_images = master_config.get('visual_dataset', {}).get('generated_images', {})
     
     if not generated_images:
         st.info("📭 No hay imágenes generadas aún. Ve a la pestaña 'Generar Dataset' para crear el dataset.")
@@ -642,19 +889,42 @@ def display_visual_dataset_preview(visual_config):
             
             with cols[col_idx]:
                 try:
-                    if 'image' in img_data:
-                        img_bytes = base64.b64decode(img_data['image'])
-                        img = Image.open(io.BytesIO(img_bytes))
+                    img = None
+                    
+                    # Nuevo sistema: cargar desde archivo (PRIORITARIO)
+                    if 'file_path' in img_data and img_data['file_path']:
+                        img = load_image_from_metadata(img_data)
+                        if img:
+                            st.image(img, caption=f"Var {idx + 1}", width=100)
+                            params = img_data.get('params', {})
+                            st.caption(f"F:{params.get('font_size', 'N/A')} "
+                                     f"R:{params.get('rotation', 0):.1f}° "
+                                     f"N:{params.get('noise_level', 0):.2f}")
+                            st.caption(f"📁 {Path(img_data['file_path']).name}")
+                        else:
+                            st.error(f"❌ Archivo no encontrado: {img_data.get('file_path', 'N/A')}")
+                    
+                    # Sistema legacy: cargar desde base64 (SOLO SI NO HAY ARCHIVO)
+                    elif 'image' in img_data and img_data['image'] and img_data['image'] != None:
+                        try:
+                            img_bytes = base64.b64decode(img_data['image'])
+                            img = Image.open(io.BytesIO(img_bytes))
+                            st.image(img, caption=f"Var {idx + 1} (legacy)", width=100)
+                            params = img_data.get('params', {})
+                            st.caption(f"F:{params.get('font_size', 'N/A')} "
+                                     f"R:{params.get('rotation', 0):.1f}° "
+                                     f"N:{params.get('noise_level', 0):.2f}")
+                            st.caption("🔄 Base64 (migrar a archivos)")
+                        except Exception as e:
+                            st.error(f"❌ Error decodificando base64: {str(e)}")
+                    
+                    # Sin datos de imagen válidos
+                    else:
+                        st.warning("⚠️ Datos de imagen no disponibles")
+                        st.caption("Generar nuevamente o migrar desde base64")
                         
-                        st.image(img, caption=f"Var {idx + 1}", width=100)
-                        
-                        # Mostrar parámetros en formato compacto
-                        params = img_data.get('params', {})
-                        st.caption(f"F:{params.get('font_size', 'N/A')} "
-                                 f"R:{params.get('rotation', 0):.1f}° "
-                                 f"N:{params.get('noise_level', 0):.2f}")
                 except Exception as e:
-                    st.error(f"Error mostrando imagen {idx + 1}: {str(e)}")
+                    st.error(f"Error procesando imagen {idx + 1}: {str(e)}")
         
         if len(images_data) > 12:
             st.info(f"📝 Mostrando las primeras 12 de {len(images_data)} imágenes disponibles")
@@ -907,25 +1177,19 @@ def generate_images_for_letters(letters, variations_per_letter, visual_config, m
                 img = generate_letter_image(letter, font_size, rotation, noise_level, font)
                 
                 if img:
-                    # Convertir a base64
-                    img_base64 = image_to_base64(img)
+                    # Preparar parámetros para guardar
+                    image_params = {
+                        'font_size': font_size,
+                        'rotation': round(rotation, 2),
+                        'noise_level': noise_level,
+                        'font': font
+                    }
                     
-                    if img_base64:
-                        # Crear entrada de imagen
-                        image_entry = {
-                            'image_base64': img_base64,
-                            'params': {
-                                'font_size': font_size,
-                                'rotation': round(rotation, 2),
-                                'noise_level': noise_level,
-                                'font': font
-                            },
-                            'letter': letter.upper(),
-                            'timestamp': datetime.now().isoformat(),
-                            'image_size': visual_config.get('image_size', [64, 64])
-                        }
-                        
-                        letter_images.append(image_entry)
+                    # Guardar imagen como archivo y obtener metadatos
+                    image_metadata = save_image_to_file(img, letter, image_params)
+                    
+                    if image_metadata:
+                        letter_images.append(image_metadata)
                 
                 current_operation += 1
                 progress_bar.progress(current_operation / total_operations)
@@ -948,9 +1212,174 @@ def generate_images_for_letters(letters, variations_per_letter, visual_config, m
     else:
         st.error("❌ Error guardando las imágenes generadas")
 
+def clean_corrupted_image_data(config):
+    """Limpia datos de imagen corruptos (con image: None)"""
+    cleaned_count = 0
+    
+    if 'visual_dataset' in config and 'generated_images' in config['visual_dataset']:
+        generated_images = config['visual_dataset']['generated_images']
+        
+        for letter, images in generated_images.items():
+            # Filtrar imágenes corruptas (sin file_path y con image: None)
+            valid_images = []
+            for img_data in images:
+                if 'file_path' in img_data and img_data['file_path']:
+                    valid_images.append(img_data)  # Imagen con archivo válido
+                elif 'image' in img_data and img_data['image'] and img_data['image'] != None:
+                    valid_images.append(img_data)  # Base64 válido (legacy)
+                else:
+                    cleaned_count += 1  # Imagen corrupta
+            
+            generated_images[letter] = valid_images
+    
+    return cleaned_count
+
 def management_tab(visual_config, master_config):
     """Tab de gestión del dataset visual"""
     st.header("📁 Gestión del Dataset Visual")
+    
+    # Sección de migración y PyTorch
+    st.subheader("🔄 Migración a Sistema de Archivos")
+    
+    col_migrate1, col_migrate2 = st.columns(2)
+    
+    with col_migrate1:
+        st.markdown("**📂 Nuevo Sistema de Archivos**")
+        st.info("""
+        El nuevo sistema almacena imágenes como archivos PNG individuales 
+        en lugar de base64 en JSON. Esto es más eficiente para entrenamiento 
+        con PyTorch y reduce el tamaño del archivo de configuración.
+        """)
+        
+        # Verificar si hay imágenes base64 para migrar
+        has_base64_images = False
+        base64_count = 0
+        
+        # Buscar en múltiples secciones
+        sections_to_check = [
+            ('alphabet', 'variaciones'),
+            ('generated_samples', None),
+            ('visual_dataset', 'generated_images')
+        ]
+        
+        for section_path, sub_key in sections_to_check:
+            try:
+                current_data = master_config
+                for key in section_path.split('.') if '.' in section_path else [section_path]:
+                    if key in current_data:
+                        current_data = current_data[key]
+                    else:
+                        current_data = None
+                        break
+                
+                if not current_data:
+                    continue
+                    
+                if isinstance(current_data, dict):
+                    for letter_data in current_data.values():
+                        images_list = []
+                        
+                        if sub_key and isinstance(letter_data, dict) and sub_key in letter_data:
+                            images_list = letter_data[sub_key]
+                        elif isinstance(letter_data, list):
+                            images_list = letter_data
+                        
+                        for img_data in images_list:
+                            if isinstance(img_data, dict) and 'image' in img_data and img_data.get('image', '').strip() and 'file_path' not in img_data:
+                                has_base64_images = True
+                                base64_count += 1
+                                
+            except Exception as e:
+                st.warning(f"Error verificando sección {section_path}: {str(e)}")
+        
+        if has_base64_images:
+            st.warning(f"📊 Encontradas {base64_count} imágenes en formato base64 para migrar")
+            
+            output_dir = st.text_input(
+                "Directorio de salida:", 
+                value="visual_dataset",
+                help="Directorio donde se guardarán las imágenes"
+            )
+            
+            if st.button("🔄 Migrar a Archivos", key="migrate_to_files"):
+                with st.spinner("Migrando imágenes..."):
+                    # Crear estructura de directorios
+                    create_pytorch_dataset_structure(master_config, output_dir)
+                    
+                    # Migrar imágenes
+                    migrated = migrate_base64_to_files(master_config, output_dir)
+                    
+                    if migrated > 0:
+                        # Guardar configuración actualizada
+                        if save_master_config(master_config):
+                            st.success(f"✅ {migrated} imágenes migradas exitosamente a '{output_dir}'")
+                            st.info("📁 Estructura de directorios PyTorch creada")
+                            st.rerun()
+                        else:
+                            st.error("❌ Error guardando configuración actualizada")
+                    else:
+                        st.warning("⚠️ No se migraron imágenes")
+        else:
+            st.success("✅ Todas las imágenes ya están en formato de archivo")
+    
+    with col_migrate2:
+        st.markdown("**🧠 Configuración PyTorch**")
+        
+        # Mostrar estadísticas del dataset actual
+        file_count = 0
+        
+        # Contar archivos en diferentes secciones
+        for section_path, sub_key in sections_to_check:
+            try:
+                current_data = master_config
+                for key in section_path.split('.') if '.' in section_path else [section_path]:
+                    if key in current_data:
+                        current_data = current_data[key]
+                    else:
+                        current_data = None
+                        break
+                
+                if not current_data or not isinstance(current_data, dict):
+                    continue
+                    
+                for letter_data in current_data.values():
+                    images_list = []
+                    
+                    if sub_key and isinstance(letter_data, dict) and sub_key in letter_data:
+                        images_list = letter_data[sub_key]
+                    elif isinstance(letter_data, list):
+                        images_list = letter_data
+                    
+                    for img_data in images_list:
+                        if isinstance(img_data, dict) and 'file_path' in img_data:
+                            file_count += 1
+                            
+            except Exception as e:
+                st.warning(f"Error contando archivos en {section_path}: {str(e)}")
+        
+        st.metric("Imágenes en archivos", file_count)
+        
+        dataset_path = st.text_input(
+            "Ruta del dataset:", 
+            value="visual_dataset",
+            help="Directorio base del dataset PyTorch"
+        )
+        
+        if st.button("🏗️ Crear Estructura PyTorch", key="create_pytorch_structure"):
+            if master_config:
+                base_path = create_pytorch_dataset_structure(master_config, dataset_path)
+                st.success(f"✅ Estructura PyTorch creada en: {base_path}")
+                
+                # Mostrar estructura creada
+                classes_file = base_path / "classes.txt"
+                if classes_file.exists():
+                    with open(classes_file, 'r', encoding='utf-8') as f:
+                        classes = f.read().strip().split('\n')
+                    st.info(f"📝 Archivo classes.txt creado con {len(classes)} clases")
+            else:
+                st.error("❌ Error cargando configuración")
+    
+    st.divider()
     
     management_col1, management_col2 = st.columns(2)
     
@@ -971,6 +1400,18 @@ def management_tab(visual_config, master_config):
         
         # Opciones de limpieza
         st.markdown("**🧹 Opciones de Limpieza:**")
+        
+        # Limpiar datos corruptos
+        if st.button("🔧 Limpiar Datos Corruptos", key="clean_corrupted_data"):
+            cleaned_count = clean_corrupted_image_data(master_config)
+            if cleaned_count > 0:
+                if save_master_config(master_config):
+                    st.success(f"✅ {cleaned_count} imágenes corruptas eliminadas")
+                    st.rerun()
+                else:
+                    st.error("❌ Error guardando después de limpieza")
+            else:
+                st.info("✨ No se encontraron datos corruptos")
         
         if st.button("🗑️ Limpiar Todas las Imágenes", key="clear_all_images"):
             if st.session_state.get('confirm_clear_all', False):

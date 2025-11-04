@@ -917,7 +917,7 @@ def generar_audio_base():
             'Estado': ['✅ Existe' if p in samples else '🆕 Nueva' for p in palabras_finales],
             'Muestras Actuales': [len(samples.get(p, [])) for p in palabras_finales]
         })
-        st.dataframe(df_preview, use_container_width=True)
+        st.dataframe(df_preview, width='stretch')
         
         # Acciones adicionales
         st.markdown("---")
@@ -1293,7 +1293,7 @@ def main():
                 })
             
             df_resumen = pd.DataFrame(datos_resumen)
-            st.dataframe(df_resumen, use_container_width=True)
+            st.dataframe(df_resumen, width='stretch')
             
         else:
             st.info("📭 No hay dataset generado. Ve a **🎤 Audio Base** para comenzar.")

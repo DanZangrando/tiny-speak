@@ -482,7 +482,7 @@ def create_distribution_plots(df_metrics):
         showlegend=True
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Estadísticas descriptivas
     st.markdown("#### 📊 Estadísticas Descriptivas")
@@ -534,7 +534,7 @@ def create_correlation_analysis(df_metrics):
         width=800
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Correlaciones más fuertes
     st.markdown("#### 🎯 Correlaciones Más Significativas")
@@ -564,7 +564,7 @@ def create_correlation_analysis(df_metrics):
             if not positive_corr.empty:
                 st.dataframe(
                     positive_corr[['Métrica 1', 'Métrica 2', 'Correlación']].round(3),
-                    use_container_width=True
+                    width='stretch'
                 )
         
         with col2:
@@ -573,7 +573,7 @@ def create_correlation_analysis(df_metrics):
             if not negative_corr.empty:
                 st.dataframe(
                     negative_corr[['Métrica 1', 'Métrica 2', 'Correlación']].round(3),
-                    use_container_width=True
+                    width='stretch'
                 )
 
 def create_comparison_plots(df_metrics):
@@ -593,7 +593,7 @@ def create_comparison_plots(df_metrics):
             color='variacion_tipo'
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Spectral Centroid por tipo
@@ -605,7 +605,7 @@ def create_comparison_plots(df_metrics):
             color='variacion_tipo'
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Scatter plots de relaciones interesantes
     st.markdown("#### 🎯 Relaciones entre Métricas")
@@ -623,7 +623,7 @@ def create_comparison_plots(df_metrics):
             title='F0 Mean vs Centroide Espectral',
             hover_data=['palabra']
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Duration vs Energy
@@ -636,7 +636,7 @@ def create_comparison_plots(df_metrics):
             title='Duración vs Energía',
             hover_data=['palabra']
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Radar chart comparando promedios por tipo
     st.markdown("#### 🌟 Perfil Promedio por Tipo de Variación")
@@ -694,7 +694,7 @@ def create_comparison_plots(df_metrics):
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def create_spectral_analysis(df_metrics):
     """Análisis espectral detallado"""
@@ -729,7 +729,7 @@ def create_spectral_analysis(df_metrics):
                 title='Distribución de Formantes por Tipo',
                 box=True
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     with col2:
         # MFCC Analysis
@@ -745,7 +745,7 @@ def create_spectral_analysis(df_metrics):
                 aspect="auto",
                 title="Perfil MFCC por Tipo de Variación"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     # Análisis de características espectrales por palabra
     st.markdown("#### 📊 Características Espectrales por Palabra")
@@ -762,7 +762,7 @@ def create_spectral_analysis(df_metrics):
         )
         fig.update_xaxes(tickangle=45)
         fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Bandwidth vs Rolloff
         fig = px.scatter(
@@ -774,7 +774,7 @@ def create_spectral_analysis(df_metrics):
             title='Ancho de Banda vs Rolloff Espectral por Palabra',
             hover_data=['variacion_tipo']
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     else:
         st.info("🔍 Demasiadas palabras para análisis detallado por palabra. Mostrando estadísticas generales.")
@@ -843,7 +843,7 @@ def create_pca_clustering(df_metrics):
             height=400
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Scatter plot PC1 vs PC2
@@ -856,7 +856,7 @@ def create_pca_clustering(df_metrics):
             hover_data=['palabra']
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Componentes principales más importantes
     st.markdown("#### 🔍 Contribución de Variables a los Componentes Principales")
@@ -877,7 +877,7 @@ def create_pca_clustering(df_metrics):
         color_continuous_scale='RdBu'
     )
     fig.update_layout(height=300)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Tabla de loadings más importantes
     st.markdown("#### 📊 Variables Más Influyentes")
@@ -1154,7 +1154,7 @@ def mostrar_analisis_dataset():
             if not df_filtered.empty:
                 st.dataframe(
                     df_filtered[display_cols].round(2),
-                    use_container_width=True,
+                    width='stretch',
                     height=400
                 )
                 
@@ -1338,7 +1338,7 @@ def mostrar_waveform_analysis():
         
         if analysis_result:
             # Mostrar gráfico
-            st.plotly_chart(analysis_result['fig'], use_container_width=True)
+            st.plotly_chart(analysis_result['fig'], width='stretch')
             
             # Mostrar métricas
             col1, col2, col3, col4 = st.columns(4)
@@ -1503,7 +1503,7 @@ def main():
                         height=500
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                     
                     # Tabla de comparación
                     st.markdown("#### 📋 Tabla de Comparación")
@@ -1514,7 +1514,7 @@ def main():
                     ]
                     
                     comparison_display = df_comparison[display_metrics].round(2)
-                    st.dataframe(comparison_display, use_container_width=True)
+                    st.dataframe(comparison_display, width='stretch')
         
         else:
             st.info("📭 No hay dataset disponible para análisis individual.")

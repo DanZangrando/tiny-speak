@@ -95,56 +95,7 @@ def apply_sidebar_css():
     </style>
     """, unsafe_allow_html=True)
 
-def display_sidebar_mini_gallery(visual_config):
-    """Mini galería persistente para la sidebar"""
-    if not visual_config or not visual_config.get('generated_images'):
-        return
-    
-    images = visual_config['generated_images']
-    
-    st.markdown("""
-    <div style="background: rgba(255,255,255,0.1);
-                padding: 0.4rem; border-radius: 6px; margin: 0.3rem 0;
-                border: 1px solid rgba(255,255,255,0.2);">
-        <p style="margin: 0; color: rgba(255,255,255,0.8); font-size: 0.7rem; 
-                  text-align: center; font-weight: 500;">
-            🖼️ Vista Previa Visual
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Seleccionar 3 muestras aleatorias
-    sample_images = []
-    available_letters = list(images.keys())[:3]
-    
-    for letra in available_letters:
-        imgs = images[letra]
-        if imgs:
-            sample = random.choice(imgs)
-            sample_images.append((letra.upper(), sample))
-    
-    # Mostrar mini galería
-    if sample_images:
-        cols_mini = st.columns(3)
-        for i, (letra, img_data) in enumerate(sample_images):
-            with cols_mini[i]:
-                try:
-                    if 'image' in img_data:
-                        img_bytes = base64.b64decode(img_data['image'])
-                        img = Image.open(io.BytesIO(img_bytes))
-                        
-                        st.image(img, caption=letra, width=40)
-                except Exception:
-                    st.caption("❌")
-
-        # Info compacta
-        total_imgs = sum(len(imgs) for imgs in images.values())
-        st.markdown(f"""
-        <div style="color: rgba(255,255,255,0.6); font-size: 0.7rem; 
-                    text-align: center; margin-top: 0.3rem;">
-            📊 {total_imgs:,} imágenes totales
-        </div>
-        """, unsafe_allow_html=True)
+# Función eliminada - mini galería del sidebar removida
 
 def display_modern_sidebar():
     """Sidebar modernizada y persistente para todas las páginas"""
@@ -251,24 +202,7 @@ def display_modern_sidebar():
         </div>
         """, unsafe_allow_html=True)
         
-        # Mini galería persistente del dataset visual
-        if visual_config and visual_config.get('generated_images'):
-            display_sidebar_mini_gallery(visual_config)
-        
-        # Navegación más sutil
-        st.markdown("""
-        <div style="background: rgba(255, 255, 255, 0.15);
-                    padding: 0.8rem; border-radius: 10px; margin: 1rem 0;
-                    color: white; text-align: center;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    backdrop-filter: blur(10px);">
-            <h3 style="margin: 0; font-size: 1rem; font-weight: 600;">⚡ Navegación</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Botón de actualización
-        if st.button("🔄 Actualizar Dashboard", key="refresh_dashboard_global", width='stretch'):
-            st.rerun()
+        # Sección removida - Mini galería y navegación eliminadas
         
         st.markdown("---")
         

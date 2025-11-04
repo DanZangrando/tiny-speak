@@ -86,9 +86,11 @@ st.markdown("""
 
 def load_master_config():
     """Cargar configuración desde master_dataset_config.json"""
-    config_file = "../master_dataset_config.json"
+    # Usar ruta absoluta basada en la ubicación del archivo actual
+    current_dir = Path(__file__).parent.parent
+    config_file = current_dir / "master_dataset_config.json"
     
-    if os.path.exists(config_file):
+    if config_file.exists():
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -97,7 +99,7 @@ def load_master_config():
             st.error(f"Error cargando configuración maestra: {e}")
             return None
     else:
-        st.error("❌ No se encontró el archivo ../master_dataset_config.json")
+        st.error(f"❌ No se encontró el archivo {config_file}")
         return None
 
 def create_dataframe_from_images(visual_config):
@@ -191,7 +193,7 @@ def main():
     config = load_master_config()
     
     if config is None:
-        st.error("❌ No se puede cargar la configuración. Verifica que existe el archivo ../master_dataset_config.json")
+        st.error("❌ No se puede cargar la configuración. Verifica que existe el archivo master_dataset_config.json")
         return
     
     visual_config = config.get('visual_dataset', {})
@@ -278,7 +280,7 @@ def show_general_summary(visual_config, df_detailed):
             color_continuous_scale='viridis'
         )
         fig_letters.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig_letters, use_container_width=True)
+        st.plotly_chart(fig_letters, width='stretch')
     
     with chart_col2:
         # Distribución de categorías de tamaño
@@ -291,7 +293,7 @@ def show_general_summary(visual_config, df_detailed):
             color_discrete_sequence=px.colors.qualitative.Set3
         )
         fig_size.update_layout(height=400)
-        st.plotly_chart(fig_size, use_container_width=True)
+        st.plotly_chart(fig_size, width='stretch')
     
     # Estadísticas detalladas
     st.markdown("---")
@@ -302,20 +304,20 @@ def show_general_summary(visual_config, df_detailed):
     with stats_col1:
         st.subheader("📏 Tamaños de Fuente")
         font_stats = df_detailed['Font_Size'].describe()
-        st.dataframe(font_stats, use_container_width=True)
+        st.dataframe(font_stats, width='stretch')
         
         st.subheader("🎯 Fuentes Más Usadas")
         font_usage = df_detailed['Font'].value_counts().head(5)
-        st.dataframe(font_usage, use_container_width=True)
+        st.dataframe(font_usage, width='stretch')
     
     with stats_col2:
         st.subheader("🔄 Rotaciones")
         rotation_stats = df_detailed['Rotacion'].describe()
-        st.dataframe(rotation_stats, use_container_width=True)
+        st.dataframe(rotation_stats, width='stretch')
         
         st.subheader("🌫️ Niveles de Ruido")
         noise_stats = df_detailed['Noise_Level'].describe()
-        st.dataframe(noise_stats, use_container_width=True)
+        st.dataframe(noise_stats, width='stretch')
     
     with stats_col3:
         st.subheader("🕐 Información Temporal")
@@ -343,7 +345,7 @@ def show_general_summary(visual_config, df_detailed):
                         y=daily_counts.values,
                         title="📅 Imágenes Generadas por Día"
                     )
-                    st.plotly_chart(fig_timeline, use_container_width=True)
+                    st.plotly_chart(fig_timeline, width='stretch')
             else:
                 st.write("📅 No hay información temporal válida")
         
@@ -364,7 +366,7 @@ def show_general_summary(visual_config, df_detailed):
         title="🔗 Matriz de Correlación de Parámetros",
         color_continuous_scale='RdBu'
     )
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width='stretch')
 
 def show_letter_analysis(visual_config, df_detailed):
     """Análisis detallado por letra específica"""
@@ -450,7 +452,7 @@ def show_letter_analysis(visual_config, df_detailed):
                     nbins=15,
                     color_discrete_sequence=['#667eea']
                 )
-                st.plotly_chart(fig_font_dist, use_container_width=True)
+                st.plotly_chart(fig_font_dist, width='stretch')
             
             with graph_col2:
                 # Scatter plot rotación vs ruido
@@ -463,7 +465,7 @@ def show_letter_analysis(visual_config, df_detailed):
                     color='Font_Size',
                     color_continuous_scale='viridis'
                 )
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                st.plotly_chart(fig_scatter, width='stretch')
             
             # Tabla detallada de parámetros
             st.markdown("---")
@@ -480,7 +482,7 @@ def show_letter_analysis(visual_config, df_detailed):
                 except:
                     pass  # Mantener formato original si falla
             
-            st.dataframe(display_data, use_container_width=True, height=300)
+            st.dataframe(display_data, width='stretch', height=300)
             
             # Opción de descarga de datos de la letra
             if st.button(f"📥 Descargar datos de la letra '{selected_letter}'"):
@@ -613,7 +615,7 @@ def show_distributions_analysis(visual_config, df_detailed):
                 )
         
         fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Estadísticas descriptivas
     st.markdown("---")
@@ -627,7 +629,7 @@ def show_distributions_analysis(visual_config, df_detailed):
         
         with stats_col1:
             st.subheader("📈 Estadísticas Básicas")
-            st.dataframe(stats, use_container_width=True)
+            st.dataframe(stats, width='stretch')
         
         with stats_col2:
             st.subheader("📊 Información Adicional")
@@ -641,12 +643,12 @@ def show_distributions_analysis(visual_config, df_detailed):
                 'Valor': perc_values.values
             })
             
-            st.dataframe(perc_df, use_container_width=True)
+            st.dataframe(perc_df, width='stretch')
     
     else:
         # Estadísticas agrupadas
         grouped_stats = df_detailed.groupby(group_by)[parameter].describe()
-        st.dataframe(grouped_stats, use_container_width=True)
+        st.dataframe(grouped_stats, width='stretch')
         
         # Gráfico de medias por grupo
         group_means = df_detailed.groupby(group_by)[parameter].mean().sort_values(ascending=False)
@@ -660,7 +662,7 @@ def show_distributions_analysis(visual_config, df_detailed):
             color_continuous_scale='viridis'
         )
         
-        st.plotly_chart(fig_means, use_container_width=True)
+        st.plotly_chart(fig_means, width='stretch')
 
 def show_interactive_gallery(visual_config, df_detailed):
     """Galería interactiva de imágenes"""
@@ -774,7 +776,8 @@ def show_interactive_gallery(visual_config, df_detailed):
                     
                     # Mostrar imagen
                     try:
-                        img_base64 = image_data.get('image_base64', '')
+                        # El campo correcto es 'image', no 'image_base64'
+                        img_base64 = image_data.get('image', '')
                         if img_base64:
                             img_data = base64.b64decode(img_base64)
                             img = Image.open(io.BytesIO(img_data))

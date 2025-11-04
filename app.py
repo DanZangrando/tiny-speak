@@ -45,30 +45,48 @@ from components.modern_sidebar import display_modern_sidebar
 # =============================================================================
 
 @st.cache_resource
-def setup_models():
-    """Inicializa los modelos y configuración del sistema"""
+def setup_models(autoload: bool = False):
+    """Inicializa (o prepara) los modelos y configuración del sistema.
+
+    Para evitar cargas pesadas en el dashboard principal, por defecto
+    `autoload=False` y la función retorna la información ligera (device, words)
+    sin cargar pesos grandes. Las páginas de entrenamiento/inferencia pueden
+    llamar `setup_models(autoload=True)` para forzar la carga completa.
+    """
     device = encontrar_device()
     st.sidebar.info(f"Dispositivo detectado: {device}")
-    
-    # Cargar modelo Wav2Vec2
-    with st.spinner("Cargando modelo Wav2Vec2..."):
-        wav2vec_model = load_wav2vec_model(device=device)
-    
+
     # Obtener palabras por defecto
     words = get_default_words()
-    
-    # Inicializar modelos
-    tiny_speak = TinySpeak(words=words, hidden_dim=64, num_layers=2, wav2vec_dim=WAV2VEC_DIM)
-    tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model)
-    tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
-    tiny_speller = TinySpeller(tiny_recognizer=tiny_recognizer, tiny_speak=tiny_speak)
-    
-    # Mover modelos al dispositivo
-    tiny_speak = tiny_speak.to(device)
-    tiny_listener = tiny_listener.to(device)
-    tiny_recognizer = tiny_recognizer.to(device)
-    tiny_speller = tiny_speller.to(device)
-    
+
+    if not autoload:
+        # Retornar estructura mínima (sin pesos cargados)
+        return {
+            'device': device,
+            'wav2vec_model': None,
+            'tiny_speak': None,
+            'tiny_listener': None,
+            'tiny_recognizer': None,
+            'tiny_speller': None,
+            'words': words
+        }
+
+    # Si se solicita autoload, cargar los modelos pesados
+    with st.spinner("Cargando modelo Wav2Vec2 y modelos locales (esto puede tardar)..."):
+        wav2vec_model = load_wav2vec_model(device=device)
+
+        # Inicializar modelos
+        tiny_speak = TinySpeak(words=words, hidden_dim=64, num_layers=2, wav2vec_dim=WAV2VEC_DIM)
+        tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model)
+        tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
+        tiny_speller = TinySpeller(tiny_recognizer=tiny_recognizer, tiny_speak=tiny_speak)
+
+        # Mover modelos al dispositivo
+        tiny_speak = tiny_speak.to(device)
+        tiny_listener = tiny_listener.to(device)
+        tiny_recognizer = tiny_recognizer.to(device)
+        tiny_speller = tiny_speller.to(device)
+
     return {
         'device': device,
         'wav2vec_model': wav2vec_model,
@@ -328,13 +346,12 @@ def verificar_consistencia_datasets():
         "mensaje": "Datasets sincronizados"
     }
     
-    # Verificar dataset de audio
-    audio_config = load_dataset_config("master_dataset_config.json")
-    if audio_config and 'generated_samples' in audio_config:
-        palabras_audio = set(audio_config['generated_samples'].keys())
+    # Verificar dataset de audio (reutilizar master_config ya cargado)
+    if master_config and 'generated_samples' in master_config:
+        palabras_audio = set(master_config['generated_samples'].keys())
         
         # Verificar si hay palabras generadas y si coinciden
-        if not audio_config['generated_samples']:
+        if not master_config['generated_samples']:
             resultado["audio"] = False
             resultado["mensaje"] = "No hay dataset de audio generado"
         else:
@@ -365,8 +382,8 @@ def verificar_consistencia_datasets():
                     resultado["mensaje"] = f"Dataset sincronizado ({palabras_principales_presentes}/{total_configuradas} palabras principales)"
         
         # Verificar método de síntesis (si está disponible en el config)
-        metodo_dataset = audio_config.get('configuracion_audio', {}).get('metodo_sintesis', 
-                                        audio_config.get('metodo_sintesis', 'desconocido'))
+        metodo_dataset = master_config.get('configuracion_audio', {}).get('metodo_sintesis', 
+                                        master_config.get('metodo_sintesis', 'desconocido'))
         if metodo_dataset != metodo_configurado and metodo_dataset != 'desconocido':
             resultado["audio"] = False
             resultado["mensaje"] = f"Método de síntesis desincronizado: {metodo_dataset} vs {metodo_configurado}"
@@ -374,8 +391,7 @@ def verificar_consistencia_datasets():
         resultado["audio"] = False
         resultado["mensaje"] = "No se encontró dataset de audio generado"
     
-    # Verificar dataset visual desde master config
-    master_config = load_dataset_config("master_dataset_config.json")
+    # Verificar dataset visual (reutilizar master_config ya cargado)
     if master_config and 'visual_dataset' in master_config:
         visual_config = master_config['visual_dataset']
         if visual_config and 'generated_images' in visual_config:
@@ -515,15 +531,17 @@ def display_system_metrics():
         vocab_size = 0
         vocab_status = "⚠️"
     
-    # Datasets con verificación de contenido real
-    audio_config = load_dataset_config("master_dataset_config.json")
-    if audio_config and 'generated_samples' in audio_config:
-        total_audio_samples = sum(len(samples) for samples in audio_config['generated_samples'].values())
+    # Datasets con verificación de contenido real (cargar config una sola vez)
+    master_config = load_dataset_config("master_dataset_config.json")
+    
+    # Audio dataset
+    if master_config and 'generated_samples' in master_config:
+        total_audio_samples = sum(len(samples) for samples in master_config['generated_samples'].values())
         audio_status = f"✅ ({total_audio_samples})"
     else:
         audio_status = "⚙️"
     
-    master_config = load_dataset_config("master_dataset_config.json")
+    # Visual dataset
     visual_config = master_config.get('visual_dataset', {}) if master_config else {}
     if visual_config and 'generated_images' in visual_config:
         total_visual_samples = sum(len(images) for images in visual_config['generated_images'].values())
@@ -607,7 +625,6 @@ def display_dataset_statistics():
     
     # Cargar configuraciones
     master_config = load_dataset_config("master_dataset_config.json")
-    master_config = load_dataset_config("master_dataset_config.json")
     audio_config = master_config if master_config else {}
     visual_config = master_config.get('visual_dataset', {}) if master_config else {}
     
@@ -626,8 +643,11 @@ def display_dataset_statistics():
         display_audio_statistics(audio_config, master_config)
     
     with tab2:
-        # Usar función mejorada si hay imágenes generadas, sino usar la original
-        if visual_config and visual_config.get('generated_images'):
+        # Usar función mejorada si hay imágenes generadas en master_config
+        images_exist = (master_config and 
+                       master_config.get('visual_dataset', {}).get('generated_images', {}))
+        
+        if images_exist:
             display_enhanced_visual_statistics(visual_config, master_config)
         else:
             display_visual_statistics(visual_config, master_config)
@@ -1085,67 +1105,22 @@ def display_technical_info():
 
 # Función removida - ahora se importa desde components.modern_sidebar
 
-def display_sidebar_mini_gallery(visual_config):
-    """Mini galería persistente para la sidebar"""
-    if not visual_config or not visual_config.get('generated_images'):
-        return
-    
-    images = visual_config['generated_images']
-    
-    st.markdown("""
-    <div style="background: rgba(255,255,255,0.1);
-                padding: 0.4rem; border-radius: 6px; margin: 0.3rem 0;
-                border: 1px solid rgba(255,255,255,0.2);">
-        <p style="margin: 0; color: rgba(255,255,255,0.8); font-size: 0.7rem; 
-                  text-align: center; font-weight: 500;">
-            🖼️ Vista Previa Visual
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Seleccionar 3 muestras aleatorias
-    sample_images = []
-    available_letters = list(images.keys())[:3]
-    
-    for letra in available_letters:
-        imgs = images[letra]
-        if imgs:
-            sample = random.choice(imgs)
-            sample_images.append((letra.upper(), sample))
-    
-    # Mostrar mini galería
-    if sample_images:
-        cols_mini = st.columns(3)
-        for i, (letra, img_data) in enumerate(sample_images):
-            with cols_mini[i]:
-                try:
-                    if 'image' in img_data:
-                        img_bytes = base64.b64decode(img_data['image'])
-                        img = Image.open(io.BytesIO(img_bytes))
-                        
-                        st.image(img, caption=letra, width=40)
-                except Exception as e:
-                    st.caption("❌", style={'font-size': '0.7rem'})
-
-        # Info compacta
-        total_imgs = sum(len(imgs) for imgs in images.values())
-        st.markdown(f"""
-        <div style="color: rgba(255,255,255,0.6); font-size: 0.7rem; 
-                    text-align: center; margin-top: 0.3rem;">
-            📊 {total_imgs:,} imágenes totales
-        </div>
-        """, unsafe_allow_html=True)
+# Función removida - mini galería del sidebar eliminada
 
 # =============================================================================
 # FUNCIONES MEJORADAS PARA DATASET VISUAL
 # =============================================================================
 
-def display_visual_preview_gallery(visual_config):
+def display_visual_preview_gallery(visual_config, master_config=None):
     """Galería de preview de imágenes del dataset visual"""
-    if not visual_config or not visual_config.get('generated_images'):
-        return
+    # Buscar imágenes en el lugar correcto
+    if master_config:
+        images = master_config.get('visual_dataset', {}).get('generated_images', {})
+    else:
+        images = visual_config.get('generated_images', {}) if visual_config else {}
     
-    images = visual_config['generated_images']
+    if not images:
+        return
     
     st.markdown("#### 🖼️ Galería de Muestras")
     
@@ -1170,10 +1145,24 @@ def display_visual_preview_gallery(visual_config):
         for i, (letra, img_data) in enumerate(sample_images[:6]):
             with cols_gallery[i]:
                 try:
-                    if 'image' in img_data:
+                    img = None
+                    
+                    # Nuevo sistema: cargar desde archivo (PRIORITARIO)
+                    if 'file_path' in img_data and img_data['file_path']:
+                        from pathlib import Path
+                        from PIL import Image as PILImage
+                        
+                        base_dir = Path(__file__).parent
+                        image_path = base_dir / img_data['file_path']
+                        if image_path.exists():
+                            img = PILImage.open(image_path)
+                    
+                    # Sistema legacy: cargar desde base64 (SOLO SI NO HAY ARCHIVO)
+                    elif 'image' in img_data and img_data['image'] and img_data['image'] != None:
                         img_bytes = base64.b64decode(img_data['image'])
                         img = Image.open(io.BytesIO(img_bytes))
-                        
+                    
+                    if img:
                         st.image(img, caption=f"{letra}", width=80)
                         
                         # Mostrar parámetros
@@ -1181,6 +1170,9 @@ def display_visual_preview_gallery(visual_config):
                             params = img_data['params']
                             st.caption(f"Font: {params.get('font_size', 'N/A')}px")
                             st.caption(f"Rot: {params.get('rotation', 0):.1f}°")
+                    else:
+                        st.caption(f"❌ {letra} (no disponible)")
+                        
                 except Exception as e:
                     st.caption(f"❌ Error: {letra}")
 
@@ -1188,12 +1180,13 @@ def display_enhanced_visual_statistics(visual_config, master_config):
     """Versión mejorada de estadísticas del dataset visual"""
     st.info("🖼️ **Dataset Visual**: Generación parametrizada con análisis dinámico")
     
-    if not visual_config or not visual_config.get('generated_images'):
+    # Buscar imágenes en el lugar correcto del master_config
+    images = master_config.get('visual_dataset', {}).get('generated_images', {}) if master_config else {}
+    
+    if not images:
         st.warning("📭 No hay dataset visual generado")
         st.info("💡 Ve a **🖼️ Visual Dataset** → **🖼️ Generación Inteligente** para comenzar")
         return
-    
-    images = visual_config['generated_images']
     image_params = visual_config.get('image_params', {})
     
     # Métricas principales con diseño moderno
@@ -1291,7 +1284,7 @@ def display_enhanced_visual_statistics(visual_config, master_config):
             st.plotly_chart(fig_scatter, width='stretch')
     
     # Galería de previews
-    display_visual_preview_gallery(visual_config)
+    display_visual_preview_gallery(visual_config, master_config)
     
     # Información de sincronización
     fecha_gen = visual_config.get('last_generation', visual_config.get('created', 'No disponible'))
@@ -1318,8 +1311,8 @@ def main():
     # Aplicar CSS personalizado
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     
-    # Cargar modelos una sola vez
-    models = setup_models()
+    # Preparar (sin cargar pesos pesados por defecto) — las páginas cargarán cuando lo necesiten
+    models = setup_models(autoload=False)
     
     # Sidebar modernizada
     display_modern_sidebar()
