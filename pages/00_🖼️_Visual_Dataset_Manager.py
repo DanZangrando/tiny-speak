@@ -148,6 +148,50 @@ def save_master_config(config):
         st.error(f"Error guardando configuración: {e}")
         return False
 
+def get_unique_letters_from_dataset():
+    """Detecta letras únicas del diccionario seleccionado actualmente"""
+    config = load_master_config()
+    
+    # Obtener el diccionario seleccionado
+    diccionario_info = config.get('diccionario_seleccionado', {})
+    
+    unique_letters = set()
+    
+    # Si hay un diccionario seleccionado, extraer letras de sus palabras
+    if diccionario_info and 'palabras' in diccionario_info:
+        palabras = diccionario_info['palabras']
+        for palabra in palabras:
+            # Convertir a minúsculas y extraer solo letras
+            for char in palabra.lower():
+                if char.isalpha():
+                    unique_letters.add(char)
+    else:
+        # Fallback: buscar en samples generados si no hay diccionario
+        audio_samples = config.get('generated_samples', {})
+        for vocabulary_key, samples in audio_samples.items():
+            for sample in samples:
+                word = sample.get('word', '').lower()
+                for char in word:
+                    if char.isalpha():
+                        unique_letters.add(char)
+    
+    return sorted(list(unique_letters))
+
+def get_language_letters(language='es'):
+    """Obtiene todas las letras de un idioma específico"""
+    language_alphabets = {
+        'es': list('abcdefghijklmnñopqrstuvwxyz'),  # Español
+        'en': list('abcdefghijklmnopqrstuvwxyz'),   # Inglés
+        'fr': list('abcdefghijklmnopqrstuvwxyzàáâäèéêëìíîïòóôöùúûü'),  # Francés básico
+        'de': list('abcdefghijklmnopqrstuvwxyzäöüß'),  # Alemán básico
+    }
+    return language_alphabets.get(language, language_alphabets['es'])
+
+def create_language_based_dataset_name(language, method="manual"):
+    """Crea nombre de dataset basado en idioma y método"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"dataset_visual_{language}_{method}_{timestamp}"
+
 def update_visual_vocabulary():
     """Actualiza el vocabulario visual para sincronizar con el master config"""
     config = load_master_config()
@@ -229,67 +273,391 @@ def main():
     # Header moderno
     st.markdown('<h1 class="main-header">🖼️ Visual Dataset Manager</h1>', unsafe_allow_html=True)
     
-    # Sidebar con configuración
-    with st.sidebar:
-        st.markdown("""
-        <div class="sidebar-header">
-            <h3>🔧 Configuración Visual</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Sincronizar con configuración maestra
-        if st.button("🔄 Sincronizar con Master Config", type="primary"):
-            update_visual_vocabulary()
-            st.success("✅ Vocabulario sincronizado!")
-            st.rerun()
-    
     # Cargar configuración
     config = load_master_config()
     visual_config = config['visual_dataset']
     
-    # Mostrar estado de sincronización
+    # === SECCIÓN 1: DETECCIÓN Y CONFIGURACIÓN DE LETRAS ===
+    st.markdown("## 🔍 Análisis del Dataset")
+    
+    # Mostrar información del diccionario seleccionado para depuración
+    diccionario_info = config.get('diccionario_seleccionado', {})
+    if diccionario_info:
+        st.info(f"📚 **Diccionario activo**: {diccionario_info.get('nombre', 'Sin nombre')} - "
+                f"{len(diccionario_info.get('palabras', []))} palabras: "
+                f"{', '.join(diccionario_info.get('palabras', [])[:5])}")
+    else:
+        st.warning("⚠️ No hay diccionario seleccionado. Ve al dashboard principal para seleccionar uno.")
+    
+    # Detectar letras únicas del dataset actual
+    dataset_letters = get_unique_letters_from_dataset()
+    
+    # Botón de recarga por si hay problemas de cache
+    if st.button("🔄 Recargar Análisis", help="Actualiza el análisis de letras del diccionario"):
+        st.rerun()
+    
+    analysis_col1, analysis_col2 = st.columns(2)
+    
+    with analysis_col1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>📊 Letras Únicas en Dataset</h4>
+            <p><strong>{len(dataset_letters)} letras detectadas</strong></p>
+            <p style="font-size: 1rem; margin-top: 0.5rem; font-family: monospace; letter-spacing: 2px;">
+                {' '.join(dataset_letters) if dataset_letters else 'Ninguna letra detectada'}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with analysis_col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>�️ Estado del Dataset Visual</h4>
+            <p><strong>{len(visual_config.get('generated_images', {}))} letras generadas</strong></p>
+            <p style="font-size: 0.8rem; margin-top: 0.5rem;">
+                {sum(len(imgs) for imgs in visual_config.get('generated_images', {}).values())} imágenes totales
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     st.markdown("---")
-    sync_col1, sync_col2, sync_col3 = st.columns(3)
     
-    with sync_col1:
+    # === SECCIÓN 2: SELECCIÓN DE ESTRATEGIA DE GENERACIÓN ===
+    st.markdown("## 🎯 Configuración de Generación")
+    
+    strategy_col1, strategy_col2 = st.columns(2)
+    
+    with strategy_col1:
+        generation_strategy = st.radio(
+            "🎯 **Estrategia de Generación**",
+            options=["dataset_letters", "language_complete"],
+            format_func=lambda x: {
+                "dataset_letters": f"🔤 Solo letras del dataset ({len(dataset_letters)} letras)",
+                "language_complete": "🌐 Alfabeto completo del idioma"
+            }[x],
+            help="Elige si generar solo las letras presentes en tu dataset o todo el alfabeto del idioma"
+        )
+    
+    with strategy_col2:
+        if generation_strategy == "language_complete":
+            target_language = st.selectbox(
+                "🌍 **Idioma Objetivo**",
+                options=["es", "en", "fr", "de"],
+                format_func=lambda x: {
+                    "es": "🇪🇸 Español (27 letras)",
+                    "en": "🇺🇸 Inglés (26 letras)", 
+                    "fr": "🇫🇷 Francés (42 letras)",
+                    "de": "🇩🇪 Alemán (30 letras)"
+                }[x],
+                help="Selecciona el idioma para generar el alfabeto completo"
+            )
+            target_letters = get_language_letters(target_language)
+        else:
+            target_language = "dataset"
+            target_letters = dataset_letters
+    
+    # Mostrar letras objetivo
+    st.markdown(f"""
+    <div style="background: rgba(103, 58, 183, 0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+        <h4>🎯 Letras Objetivo: {len(target_letters)} letras</h4>
+        <p style="font-family: monospace; font-size: 1.2rem; letter-spacing: 2px;">
+            {' '.join(target_letters)}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # === SECCIÓN 3: CONFIGURACIÓN DE PARÁMETROS ===
+    st.markdown("## ⚙️ Parámetros de Generación")
+    
+    params_col1, params_col2, params_col3 = st.columns(3)
+    
+    with params_col1:
+        st.markdown("**🎨 Parámetros Visuales**")
+        variations_per_letter = st.number_input(
+            "Variaciones por letra",
+            min_value=1,
+            max_value=50,
+            value=visual_config.get('image_params', {}).get('variations_per_letter', 10),
+            help="Número de imágenes diferentes por cada letra"
+        )
+        
+        font_size_min = st.number_input("Tamaño mínimo de fuente", min_value=10, max_value=30, value=16)
+        font_size_max = st.number_input("Tamaño máximo de fuente", min_value=31, max_value=60, value=48)
+    
+    with params_col2:
+        st.markdown("**🔄 Transformaciones**")
+        rotation_min = st.number_input("Rotación mínima (°)", min_value=-45, max_value=-1, value=-30)
+        rotation_max = st.number_input("Rotación máxima (°)", min_value=1, max_value=45, value=30)
+        
+        noise_min = st.number_input("Ruido mínimo", min_value=0.0, max_value=0.1, value=0.0, step=0.01)
+        noise_max = st.number_input("Ruido máximo", min_value=0.1, max_value=0.3, value=0.2, step=0.01)
+    
+    with params_col3:
+        st.markdown("**📝 Fuentes**")
+        available_fonts = ["Arial", "Times New Roman", "Courier New"]
+        selected_fonts = st.multiselect(
+            "Fuentes a usar",
+            available_fonts,
+            default=visual_config.get('image_params', {}).get('fonts', ["Arial"]),
+            help="Selecciona las fuentes para generar variedad"
+        )
+    
+    # === SECCIÓN 4: GESTIÓN DE DATASET ===
+    st.markdown("---")
+    st.markdown("## 📦 Gestión del Dataset")
+    
+    dataset_col1, dataset_col2 = st.columns(2)
+    
+    with dataset_col1:
+        # Generar nombre automático del dataset
+        dataset_name = create_language_based_dataset_name(target_language, "visual_generation")
+        
+        st.text_input(
+            "📁 **Nombre del Dataset**",
+            value=dataset_name,
+            help="Nombre automático basado en idioma y método",
+            disabled=True
+        )
+        
+        clear_existing = st.checkbox(
+            "🗑️ **Borrar dataset preexistente**",
+            value=True,
+            help="Recomendado: Limpia dataset anterior del mismo idioma"
+        )
+    
+    with dataset_col2:
+        st.markdown("**🎯 Selección de Letras**")
+        if len(target_letters) <= 10:
+            letters_to_generate = st.multiselect(
+                "Letras a generar",
+                options=target_letters,
+                default=target_letters,
+                help="Selecciona las letras específicas a generar"
+            )
+        else:
+            generate_all = st.checkbox("Generar todas las letras", value=True)
+            if not generate_all:
+                letters_to_generate = st.multiselect(
+                    "Letras específicas",
+                    options=target_letters,
+                    default=target_letters[:5],
+                    help="Demasiadas letras, selecciona las específicas"
+                )
+            else:
+                letters_to_generate = target_letters
+    
+    # === SECCIÓN 5: GENERACIÓN Y VISUALIZACIÓN ===
+    st.markdown("---")
+    generation_tab1, generation_tab2 = st.tabs(["🚀 Generar Dataset", "👁️ Visualizar"])
+    
+    with generation_tab1:
+        st.markdown("### 🚀 Generación del Dataset Visual")
+        
+        # Resumen de configuración
         st.markdown(f"""
-        <div class="metric-card">
-            <h4>🎯 Vocabulario Activo</h4>
-            <p><strong>{visual_config.get('vocabulary', 'N/A')}</strong></p>
+        <div style="background: rgba(76, 175, 80, 0.1); padding: 1rem; border-radius: 8px;">
+            <h4>📋 Resumen de Configuración</h4>
+            <ul>
+                <li><strong>Estrategia:</strong> {'Alfabeto completo' if generation_strategy == 'language_complete' else 'Solo letras del dataset'}</li>
+                <li><strong>Idioma:</strong> {target_language.upper()}</li>
+                <li><strong>Letras a generar:</strong> {len(letters_to_generate)} de {len(target_letters)}</li>
+                <li><strong>Variaciones por letra:</strong> {variations_per_letter}</li>
+                <li><strong>Total de imágenes:</strong> {len(letters_to_generate) * variations_per_letter}</li>
+                <li><strong>Limpiar dataset previo:</strong> {'Sí' if clear_existing else 'No'}</li>
+            </ul>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Botón de generación
+        if st.button("🚀 **Generar Dataset Visual**", type="primary", use_container_width=True):
+            if not letters_to_generate:
+                st.error("⚠️ Selecciona al menos una letra para generar")
+            elif not selected_fonts:
+                st.error("⚠️ Selecciona al menos una fuente")
+            else:
+                # Aquí iría la lógica de generación
+                generate_visual_dataset_new(
+                    letters_to_generate, variations_per_letter,
+                    font_size_min, font_size_max, rotation_min, rotation_max,
+                    noise_min, noise_max, selected_fonts, target_language, clear_existing
+                )
     
-    with sync_col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>🔤 Letras Objetivo</h4>
-            <p><strong>{len(visual_config.get('letters', []))}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
+    with generation_tab2:
+        display_visual_dataset_preview(visual_config)
+
+def generate_visual_dataset_new(letters, variations_per_letter, font_size_min, font_size_max, 
+                               rotation_min, rotation_max, noise_min, noise_max, fonts, 
+                               language, clear_existing):
+    """Nueva función de generación mejorada del dataset visual"""
     
-    with sync_col3:
-        total_images = sum(len(samples) for samples in visual_config.get('generated_images', {}).values())
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>🖼️ Imágenes Generadas</h4>
-            <p><strong>{total_images}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
-    # Tabs de funcionalidad
-    tab1, tab2, tab3, tab4 = st.tabs(["🎛️ Configuración", "🖼️ Generación", "📁 Gestión", "📋 Configuración del Dataset"])
+    # Cargar configuración
+    master_config = load_master_config()
     
-    with tab1:
-        configuration_tab(visual_config, config)
+    # Limpiar dataset previo si se solicita
+    if clear_existing:
+        if 'visual_dataset' not in master_config:
+            master_config['visual_dataset'] = {}
+        master_config['visual_dataset']['generated_images'] = {}
+        status_text.text("🗑️ Limpiando dataset previo...")
     
-    with tab2:
-        generation_tab(visual_config, config)
+    # Asegurar que existe la estructura
+    if 'generated_images' not in master_config['visual_dataset']:
+        master_config['visual_dataset']['generated_images'] = {}
     
-    with tab3:
-        management_tab(visual_config, config)
+    generated_images = master_config['visual_dataset']['generated_images']
+    total_operations = len(letters) * variations_per_letter
+    current_operation = 0
     
-    with tab4:
-        dataset_configuration_tab(visual_config, config)
+    try:
+        for letter_idx, letter in enumerate(letters):
+            status_text.text(f"🖼️ Generando imágenes para la letra '{letter.upper()}'...")
+            
+            # Inicializar lista para esta letra
+            if letter not in generated_images:
+                generated_images[letter] = []
+            
+            letter_images = []
+            
+            for var_idx in range(variations_per_letter):
+                # Parámetros aleatorios para cada variación
+                font = random.choice(fonts)
+                font_size = random.randint(font_size_min, font_size_max)
+                rotation = random.uniform(rotation_min, rotation_max)
+                noise_level = random.uniform(noise_min, noise_max)
+                
+                # Generar imagen
+                img_base64 = generate_letter_image(
+                    letter, font_size, rotation, noise_level, font
+                )
+                
+                if img_base64:
+                    letter_data = {
+                        "image": img_base64,
+                        "params": {
+                            "font": font,
+                            "font_size": font_size,
+                            "rotation": rotation,
+                            "noise_level": noise_level,
+                            "size": [64, 64]
+                        },
+                        "letter": letter.upper(),
+                        "created": datetime.now().isoformat(),
+                        "language": language,
+                        "generation_method": "advanced_v2"
+                    }
+                    letter_images.append(letter_data)
+                
+                current_operation += 1
+                progress_bar.progress(current_operation / total_operations)
+            
+            # Agregar imágenes de esta letra al dataset
+            generated_images[letter].extend(letter_images)
+        
+        # Actualizar metadatos del dataset
+        master_config['visual_dataset'].update({
+            'letters': letters,
+            'language': language,
+            'generation_params': {
+                'font_size_range': [font_size_min, font_size_max],
+                'rotation_range': [rotation_min, rotation_max],
+                'noise_range': [noise_min, noise_max],
+                'fonts': fonts,
+                'variations_per_letter': variations_per_letter
+            },
+            'last_generated': datetime.now().isoformat(),
+            'total_images': sum(len(imgs) for imgs in generated_images.values())
+        })
+        
+        # Guardar configuración
+        save_master_config(master_config)
+        
+        status_text.text("✅ ¡Generación completada!")
+        st.success(f"🎉 ¡Dataset generado exitosamente! "
+                  f"Se generaron {len(letters) * variations_per_letter} imágenes "
+                  f"para {len(letters)} letras en {language.upper()}")
+        
+        # Mostrar estadísticas finales
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Letras generadas", len(letters))
+        with col2:
+            st.metric("Imágenes por letra", variations_per_letter)
+        with col3:
+            st.metric("Total de imágenes", len(letters) * variations_per_letter)
+            
+    except Exception as e:
+        st.error(f"❌ Error durante la generación: {str(e)}")
+    
+    progress_bar.empty()
+    status_text.empty()
+
+def display_visual_dataset_preview(visual_config):
+    """Muestra una vista previa del dataset visual generado"""
+    
+    st.markdown("### 👁️ Vista Previa del Dataset")
+    
+    generated_images = visual_config.get('generated_images', {})
+    
+    if not generated_images:
+        st.info("📭 No hay imágenes generadas aún. Ve a la pestaña 'Generar Dataset' para crear el dataset.")
+        return
+    
+    # Estadísticas rápidas
+    total_images = sum(len(imgs) for imgs in generated_images.values())
+    letters_count = len(generated_images)
+    
+    stats_col1, stats_col2, stats_col3 = st.columns(3)
+    with stats_col1:
+        st.metric("🔤 Letras", letters_count)
+    with stats_col2:
+        st.metric("🖼️ Total Imágenes", total_images)
+    with stats_col3:
+        avg_per_letter = total_images // letters_count if letters_count > 0 else 0
+        st.metric("📊 Promedio/Letra", avg_per_letter)
+    
+    # Selector de letra para previsualizar
+    available_letters = list(generated_images.keys())
+    selected_letter = st.selectbox(
+        "Selecciona una letra para previsualizar",
+        available_letters,
+        help="Elige una letra para ver sus imágenes generadas"
+    )
+    
+    if selected_letter and selected_letter in generated_images:
+        images_data = generated_images[selected_letter]
+        
+        st.markdown(f"#### 📝 Letra '{selected_letter.upper()}' - {len(images_data)} imágenes")
+        
+        # Mostrar hasta 12 imágenes en una grilla
+        images_to_show = images_data[:12]
+        
+        cols = st.columns(4)
+        for idx, img_data in enumerate(images_to_show):
+            col_idx = idx % 4
+            
+            with cols[col_idx]:
+                try:
+                    if 'image' in img_data:
+                        img_bytes = base64.b64decode(img_data['image'])
+                        img = Image.open(io.BytesIO(img_bytes))
+                        
+                        st.image(img, caption=f"Var {idx + 1}", width=100)
+                        
+                        # Mostrar parámetros en formato compacto
+                        params = img_data.get('params', {})
+                        st.caption(f"F:{params.get('font_size', 'N/A')} "
+                                 f"R:{params.get('rotation', 0):.1f}° "
+                                 f"N:{params.get('noise_level', 0):.2f}")
+                except Exception as e:
+                    st.error(f"Error mostrando imagen {idx + 1}: {str(e)}")
+        
+        if len(images_data) > 12:
+            st.info(f"📝 Mostrando las primeras 12 de {len(images_data)} imágenes disponibles")
 
 def configuration_tab(visual_config, master_config):
     """Tab de configuración de parámetros visuales"""

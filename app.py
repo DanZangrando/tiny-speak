@@ -374,11 +374,13 @@ def verificar_consistencia_datasets():
         resultado["audio"] = False
         resultado["mensaje"] = "No se encontró dataset de audio generado"
     
-    # Verificar dataset visual
-    visual_config = load_dataset_config("visual_dataset_config.json")
-    if visual_config and 'generated_images' in visual_config:
-        # Para visual, verificamos letras, no palabras completas
-        pass
+    # Verificar dataset visual desde master config
+    master_config = load_dataset_config("master_dataset_config.json")
+    if master_config and 'visual_dataset' in master_config:
+        visual_config = master_config['visual_dataset']
+        if visual_config and 'generated_images' in visual_config:
+            # Para visual, verificamos letras, no palabras completas
+            pass
     
     return resultado
 
@@ -521,7 +523,8 @@ def display_system_metrics():
     else:
         audio_status = "⚙️"
     
-    visual_config = load_dataset_config("visual_dataset_config.json")
+    master_config = load_dataset_config("master_dataset_config.json")
+    visual_config = master_config.get('visual_dataset', {}) if master_config else {}
     if visual_config and 'generated_images' in visual_config:
         total_visual_samples = sum(len(images) for images in visual_config['generated_images'].values())
         visual_status = f"✅ ({total_visual_samples})"
@@ -604,8 +607,9 @@ def display_dataset_statistics():
     
     # Cargar configuraciones
     master_config = load_dataset_config("master_dataset_config.json")
-    audio_config = load_dataset_config("master_dataset_config.json")
-    visual_config = load_dataset_config("visual_dataset_config.json")
+    master_config = load_dataset_config("master_dataset_config.json")
+    audio_config = master_config if master_config else {}
+    visual_config = master_config.get('visual_dataset', {}) if master_config else {}
     
     if not master_config:
         st.warning("⚠️ No hay configuración de vocabulario. Configure primero el diccionario.")
