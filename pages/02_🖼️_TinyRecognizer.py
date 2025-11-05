@@ -1,553 +1,538 @@
 """
-🖼️ TinyRecognizer - Reconocimiento de Imágenes
-Página dedicada para testing del modelo de visión para letras
+🖼️ TinyRecognizer - Entrenamiento y analítica sobre el dataset visual actual.
 """
 
+from __future__ import annotations
+
+import copy
+import time
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+import numpy as np
+import pandas as pd
+import pytorch_lightning as pl
 import streamlit as st
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw, ImageFont
-import string
-from torchvision.transforms import Compose, ToTensor, Resize, Normalize
+from PIL import Image
+from matplotlib import pyplot as plt
 
-# Importar módulos
-from models import TinyRecognizer, CORnet_Z
-from utils import encontrar_device, WAV2VEC_DIM, LETTERS
-
-# Importar sidebar moderna
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
 from components.modern_sidebar import display_modern_sidebar
+from models import TinyRecognizer
+from training.visual_dataset import DEFAULT_SPLIT_RATIOS, VisualLetterDataset, build_visual_dataloaders
+from training.visual_module import TinyRecognizerLightning
+from utils import WAV2VEC_DIM, encontrar_device
 
-# Configurar página
-st.set_page_config(
-    page_title="TinyRecognizer - Image Recognition",
-    page_icon="🖼️",
-    layout="wide"
-)
 
-@st.cache_resource
-def load_vision_models():
-    """Cargar solo los modelos necesarios para visión"""
-    device = encontrar_device()
-    
-    tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
-    tiny_recognizer = tiny_recognizer.to(device)
-    
+DEFAULT_SEED = 42
+
+
+@dataclass
+class TrainingConfig:
+    batch_size: int
+    learning_rate: float
+    weight_decay: float
+    max_epochs: int
+    num_workers: int
+    seed: int
+    freeze_backbone: bool
+    accelerator: str
+
+
+class HistoryCallback(pl.Callback):
+    """Registra métricas por época para graficarlas en Streamlit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.train_history: List[Dict] = []
+        self.val_history: List[Dict] = []
+        self.learning_rates: List[Dict] = []
+
+    @staticmethod
+    def _to_float(value: torch.Tensor | float | int) -> float:
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().cpu().item())
+        return float(value)
+
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = {"epoch": trainer.current_epoch}
+        for key in ("train_loss", "train_top1", "train_top3", "train_top5"):
+            if key in trainer.callback_metrics:
+                metrics[key] = self._to_float(trainer.callback_metrics[key])
+        if trainer.optimizers:
+            lr = float(trainer.optimizers[0].param_groups[0]["lr"])
+            metrics["lr"] = lr
+            self.learning_rates.append({"epoch": trainer.current_epoch, "lr": lr})
+        self.train_history.append(metrics)
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = {"epoch": trainer.current_epoch}
+        for key in ("val_loss", "val_top1", "val_top3", "val_top5"):
+            if key in trainer.callback_metrics:
+                metrics[key] = self._to_float(trainer.callback_metrics[key])
+        self.val_history.append(metrics)
+
+
+def load_visual_splits(seed: int = DEFAULT_SEED) -> Tuple[Dict[str, VisualLetterDataset] | None, str | None]:
+    ratios = DEFAULT_SPLIT_RATIOS
+    try:
+        splits = {
+            name: VisualLetterDataset(split=name, augment=False, seed=seed, split_ratios=ratios)
+            for name in ("train", "val", "test")
+        }
+        return splits, None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+def count_parameters(model: TinyRecognizer) -> Tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    classifier = sum(p.numel() for p in model.classifier.parameters())
+    return total, classifier
+
+
+def gather_preview_samples(dataset: VisualLetterDataset, max_images: int = 12) -> List:
+    seen: set[str] = set()
+    preview: List = []
+    for sample in dataset.samples:
+        if sample.letter not in seen:
+            preview.append(sample)
+            seen.add(sample.letter)
+        if len(preview) >= max_images:
+            break
+    return preview
+
+
+def compute_distribution(splits: Dict[str, VisualLetterDataset]) -> pd.DataFrame:
+    letters = splits["train"].letters
+    data = {}
+    for split_name, dataset in splits.items():
+        counts = {letter: 0 for letter in letters}
+        for sample in dataset.samples:
+            counts[sample.letter] += 1
+        data[split_name] = [counts[letter] for letter in letters]
+    df = pd.DataFrame(data, index=letters)
+    df["total"] = df.sum(axis=1)
+    return df
+
+
+def sanitize_metrics(metrics: Dict) -> Dict:
+    clean: Dict = {}
+    for key, value in metrics.items():
+        if isinstance(value, torch.Tensor):
+            clean[key] = float(value.detach().cpu().item())
+        elif isinstance(value, (np.generic, np.ndarray)):
+            clean[key] = float(np.asarray(value).item())
+        else:
+            clean[key] = float(value) if isinstance(value, (int, float)) else value
+    return clean
+
+
+def compute_confusion_matrix(predictions: List[Dict], num_classes: int) -> np.ndarray:
+    matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+    if not predictions:
+        return matrix
+    for batch in predictions:
+        true_labels = batch.get("true_labels", [])
+        top_indices = batch.get("top_indices", [])
+        for y_true, candidates in zip(true_labels, top_indices):
+            if not candidates:
+                continue
+            predicted = candidates[0]
+            matrix[y_true, predicted] += 1
+    return matrix
+
+
+def compute_per_class_accuracy(matrix: np.ndarray) -> List[float]:
+    totals = matrix.sum(axis=1)
+    correct = np.diag(matrix)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        acc = np.divide(correct, totals, out=np.zeros_like(correct, dtype=float), where=totals > 0)
+    return acc.tolist()
+
+
+def extract_misclassifications(
+    predictions: List[Dict],
+    class_names: Iterable[str],
+    limit: int = 6,
+) -> List[Dict]:
+    examples: List[Dict] = []
+    classes = list(class_names)
+    if not predictions:
+        return examples
+    for batch in predictions:
+        letters = batch.get("letters", [])
+        true_labels = batch.get("true_labels", [])
+        top_indices = batch.get("top_indices", [])
+        top_scores = batch.get("top_scores", [])
+        for letter, y_true, preds, scores in zip(letters, true_labels, top_indices, top_scores):
+            if not preds:
+                continue
+            predicted_idx = preds[0]
+            if predicted_idx == y_true:
+                continue
+            examples.append(
+                {
+                    "letra": letter,
+                    "prediccion": classes[predicted_idx],
+                    "confianza": float(scores[0]),
+                    "top5": ", ".join(classes[i] for i in preds[:5]),
+                }
+            )
+    examples.sort(key=lambda item: item["confianza"], reverse=True)
+    return examples[:limit]
+
+
+def plot_confusion(matrix: np.ndarray, class_names: List[str]) -> plt.Figure:
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(matrix, interpolation="nearest", cmap="Blues")
+    ax.figure.colorbar(im, ax=ax)
+    ax.set_xticks(range(len(class_names)))
+    ax.set_yticks(range(len(class_names)))
+    ax.set_xticklabels(class_names, rotation=45, ha="right")
+    ax.set_yticklabels(class_names)
+    ax.set_ylabel("Etiqueta real")
+    ax.set_xlabel("Predicción")
+    ax.set_title("Matriz de confusión")
+    thresh = matrix.max() / 2 if matrix.size else 0
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            value = matrix[i, j]
+            if value == 0:
+                continue
+            ax.text(
+                j,
+                i,
+                str(value),
+                ha="center",
+                va="center",
+                color="white" if value > thresh else "black",
+                fontsize=10,
+            )
+    fig.tight_layout()
+    return fig
+
+
+def _resolve_accelerator(accelerator: str) -> Tuple[str, int | str | None]:
+    if accelerator == "cpu":
+        return "cpu", 1
+    if accelerator == "gpu":
+        if not torch.cuda.is_available():
+            raise RuntimeError("No hay GPU disponible para entrenamiento.")
+        return "gpu", 1
+    # fallback to auto configuration
+    return "auto", "auto"
+
+
+def _run_training_once(config: TrainingConfig) -> Dict:
+    pl.seed_everything(config.seed, workers=True)
+    torch.set_float32_matmul_precision("medium")
+
+    train_ds, val_ds, test_ds, loaders = build_visual_dataloaders(
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        seed=config.seed,
+        split_ratios=DEFAULT_SPLIT_RATIOS,
+    )
+
+    module = TinyRecognizerLightning(
+        num_classes=train_ds.num_classes,
+        learning_rate=config.learning_rate,
+        weight_decay=config.weight_decay,
+        freeze_backbone=config.freeze_backbone,
+    )
+
+    history_cb = HistoryCallback()
+    callbacks = [history_cb, pl.callbacks.LearningRateMonitor(logging_interval="epoch")]
+    accelerator, devices = _resolve_accelerator(config.accelerator)
+    trainer = pl.Trainer(
+        accelerator=accelerator,
+        devices=devices,
+        max_epochs=config.max_epochs,
+        deterministic=True,
+        enable_checkpointing=False,
+        enable_model_summary=False,
+        log_every_n_steps=1,
+        enable_progress_bar=True,
+        default_root_dir=str(Path.cwd() / "lightning_logs" / "tiny_recognizer"),
+        callbacks=callbacks,
+    )
+
+    start = time.perf_counter()
+    trainer.fit(module, train_dataloaders=loaders["train"], val_dataloaders=loaders["val"])
+    val_metrics = trainer.validate(module, dataloaders=loaders["val"])
+    test_metrics = trainer.test(module, dataloaders=loaders["test"])
+    duration = time.perf_counter() - start
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    val_preds = copy.deepcopy(module.validation_predictions)
+    test_preds = copy.deepcopy(module.test_predictions)
+    confusion = compute_confusion_matrix(test_preds or val_preds, train_ds.num_classes)
+
     return {
-        'device': device,
-        'tiny_recognizer': tiny_recognizer,
-        'letters': LETTERS
+        "config": asdict(config),
+        "duration": duration,
+        "train_history": history_cb.train_history,
+        "val_history": history_cb.val_history,
+        "learning_rates": history_cb.learning_rates,
+        "val_metrics": sanitize_metrics(val_metrics[0] if val_metrics else {}),
+        "test_metrics": sanitize_metrics(test_metrics[0] if test_metrics else {}),
+        "confusion_matrix": confusion.tolist(),
+        "per_class_accuracy": compute_per_class_accuracy(confusion),
+        "misclassifications": extract_misclassifications(test_preds or val_preds, train_ds.letters),
+        "class_names": train_ds.letters,
+        "num_classes": train_ds.num_classes,
+        "total_train_samples": len(train_ds),
+        "total_val_samples": len(val_ds),
+        "total_test_samples": len(test_ds),
+        "timestamp": time.time(),
+        "accelerator": config.accelerator,
     }
 
-def main():
-    # Sidebar modernizada persistente
-    display_modern_sidebar()
-    
-    st.title("🖼️ TinyRecognizer - Reconocimiento de Letras")
-    
-    # Información del modelo
-    with st.expander("🔍 Arquitectura del Modelo", expanded=True):
-        st.markdown("""
-        ### 🧠 **TinyRecognizer Architecture (CORnet-Z)**
-        
-        ```
-        Image Input (28x28x3 RGB)
-               ↓
-        🎯 V1 Block (Visual Cortex Area 1)
-        - Conv2d(3→64, kernel=7, stride=2) 
-        - ReLU + MaxPool2d(3x3, stride=2)
-        - Output: 64 channels
-               ↓
-        👁️ V2 Block (Visual Cortex Area 2)  
-        - Conv2d(64→128, kernel=3)
-        - ReLU + MaxPool2d(3x3, stride=2)
-        - Output: 128 channels
-               ↓
-        🔍 V4 Block (Visual Cortex Area 4)
-        - Conv2d(128→256, kernel=3) 
-        - ReLU + MaxPool2d(3x3, stride=2)
-        - Output: 256 channels
-               ↓
-        🧠 IT Block (Inferotemporal Cortex)
-        - Conv2d(256→512, kernel=3)
-        - ReLU + MaxPool2d(3x3, stride=2) 
-        - Output: 512 channels
-               ↓
-        🎨 Decoder
-        - AdaptiveAvgPool2d(1x1)
-        - Flatten → Linear(512→1024) → ReLU
-        - Linear(1024→768) [Embedding space]
-               ↓
-        🎯 Classifier
-        - Linear(768→26) [Letter classes a-z]
-        ```
-        
-        **Inspiración:** Arquitectura basada en el sistema visual cortical humano
-        """)
-    
-    # Cargar modelos
-    if 'vision_models' not in st.session_state:
-        with st.spinner("🤖 Cargando modelos de visión..."):
-            st.session_state.vision_models = load_vision_models()
-    
-    models = st.session_state.vision_models
-    
-    # Métricas del modelo
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🔤 Clases", f"{len(LETTERS)} letras")
-    with col2:
-        st.metric("🧠 Parámetros", f"{sum(p.numel() for p in models['tiny_recognizer'].parameters()):,}")
-    with col3:
-        st.metric("📊 Embedding Dim", f"{WAV2VEC_DIM}")
-    with col4:
-        st.metric("🖼️ Input Size", "28×28×3")
-    
-    # Pestañas para diferentes tipos de testing
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Cargar Imagen", "✏️ Dibujar Letra", "🔬 Test Sistemático", "📊 Análisis Interno"])
-    
-    with tab1:
-        test_image_upload(models)
-    
-    with tab2:
-        test_drawing_interface(models)
-        
-    with tab3:
-        test_systematic_evaluation(models)
-        
-    with tab4:
-        test_internal_analysis(models)
 
-def test_image_upload(models):
-    """Testing con imágenes subidas"""
-    st.subheader("📁 Test con Imagen Cargada")
-    
-    image_file = st.file_uploader(
-        "Sube una imagen de una letra:", 
-        type=['png', 'jpg', 'jpeg', 'bmp'],
-        help="Imágenes de letras manuscritas preferiblemente 28x28 píxeles"
+def run_training(config: TrainingConfig) -> Dict:
+    try:
+        return _run_training_once(config)
+    except RuntimeError as exc:
+        error_msg = str(exc).lower()
+        if "no kernel image" in error_msg and config.accelerator != "cpu":
+            cpu_config = replace(config, accelerator="cpu")
+            result = _run_training_once(cpu_config)
+            result["fallback_reason"] = "cuda_kernel_missing"
+            return result
+        raise
+
+
+def render_dataset_tab(
+    splits: Dict[str, VisualLetterDataset],
+    *,
+    device: str,
+) -> None:
+    st.subheader("📚 Dataset visual disponible")
+    totals = {name: len(ds) for name, ds in splits.items()}
+    num_classes = splits["train"].num_classes
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Clases", num_classes)
+    metric_cols[1].metric("Imágenes train", totals.get("train", 0))
+    metric_cols[2].metric("Imágenes val", totals.get("val", 0))
+    metric_cols[3].metric("Imágenes test", totals.get("test", 0))
+    st.caption(f"Dispositivo activo: {device}")
+
+    distribution = compute_distribution(splits)
+    st.markdown("#### Distribución por letra")
+    st.dataframe(distribution, use_container_width=True)
+
+    train_samples = gather_preview_samples(splits["train"])
+    if train_samples:
+        st.markdown("#### Vista rápida del split de entrenamiento")
+        preview_cols = st.columns(4)
+        for idx, sample in enumerate(train_samples):
+            with preview_cols[idx % 4]:
+                with Image.open(sample.path) as img:
+                    st.image(
+                        img,
+                        caption=f"{sample.letter} · {sample.path.name}",
+                        use_container_width=True,
+                    )
+
+    st.markdown("#### Arquitectura TinyRecognizer adaptada")
+    model = TinyRecognizer(num_classes=num_classes)
+    total_params, classifier_params = count_parameters(model)
+    backbone_params = total_params - classifier_params
+    info_cols = st.columns(3)
+    info_cols[0].metric("Parámetros totales", f"{total_params:,}")
+    info_cols[1].metric("Backbone", f"{backbone_params:,}")
+    info_cols[2].metric("Clasificador", f"{classifier_params:,}")
+
+    st.code(
+        f"""
+Input: 64×64×3 RGB
+V1 → Conv(3→64) + ReLU + MaxPool
+V2 → Conv(64→128) + ReLU + MaxPool
+V4 → Conv(128→256) + ReLU + MaxPool
+IT → Conv(256→512) + ReLU + MaxPool
+Decoder → AdaptiveAvgPool → Flatten → Linear(512→1024) → ReLU → Linear(1024→{WAV2VEC_DIM})
+Classifier → Linear({WAV2VEC_DIM}→{num_classes})
+        """,
+        language="text",
     )
-    
-    if image_file is not None:
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            # Mostrar imagen original
-            image = Image.open(image_file).convert('RGB')
-            st.image(image, caption="Imagen Original", use_column_width=True)
-            
-            # Información de la imagen
-            st.write(f"**Dimensiones:** {image.size}")
-            st.write(f"**Modo:** {image.mode}")
-            
-        with col2:
-            if st.button("🔍 Reconocer Letra", type="primary"):
-                analyze_image(image, models, "Imagen Cargada")
 
-def test_drawing_interface(models):
-    """Interfaz para dibujar letras"""
-    st.subheader("✏️ Dibujar una Letra")
-    
-    # Por ahora una implementación simple - en el futuro se puede usar streamlit-drawable-canvas
-    st.info("🚧 **Próximamente:** Interfaz de dibujo interactiva con canvas")
-    st.markdown("""
-    **Mientras tanto, puedes:**
-    1. Usar cualquier app de dibujo para crear una letra
-    2. Guardarla como imagen (PNG/JPG)  
-    3. Subirla en la pestaña "Cargar Imagen"
-    
-    **Recomendaciones para mejores resultados:**
-    - Letra clara sobre fondo blanco
-    - Tamaño aproximado 28x28 píxeles
-    - Trazo negro o oscuro
-    """)
-    
-    # Generar letras de muestra
-    if st.button("🎲 Generar Letra de Muestra"):
-        generate_sample_letter(models)
 
-def test_systematic_evaluation(models):
-    """Evaluación sistemática del alfabeto"""
-    st.subheader("🔬 Test Sistemático del Alfabeto")
-    
-    # Selector de letras para probar
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.markdown("#### 🎯 Configuración del Test")
-        
-        # Selector de letra específica
-        test_mode = st.radio(
-            "Modo de test:",
-            ["Letra específica", "Rango de letras", "Alfabeto completo"]
+def render_training_tab(num_classes: int) -> None:
+    st.subheader("⚙️ Entrenamiento de TinyRecognizer")
+    st.write("Configura los hiperparámetros y entrena contra el dataset actual.")
+
+    with st.form("tiny_recognizer_training"):
+        col1, col2, col3 = st.columns(3)
+        batch_size = col1.number_input("Batch size", min_value=4, max_value=256, value=32, step=4)
+        learning_rate = col2.number_input("Learning rate", min_value=1e-6, max_value=1e-1, value=1e-3, format="%.1e")
+        weight_decay = col3.number_input("Weight decay", min_value=0.0, max_value=1e-1, value=1e-4, format="%.1e")
+
+        col4, col5, col6 = st.columns(3)
+        max_epochs = int(col4.number_input("Épocas", min_value=1, max_value=200, value=20))
+        num_workers = int(col5.selectbox("Workers", options=[0, 1, 2, 4, 8], index=0))
+        seed = int(col6.number_input("Seed", min_value=0, max_value=10_000, value=DEFAULT_SEED))
+
+        accelerator = st.selectbox(
+            "Dispositivo",
+            options=["auto", "cpu", "gpu"],
+            index=0,
+            help="Usa 'cpu' si tu GPU da errores de compatibilidad.",
         )
-        
-        if test_mode == "Letra específica":
-            selected_letter = st.selectbox("Selecciona letra:", LETTERS)
-            letters_to_test = [selected_letter]
-        elif test_mode == "Rango de letras":
-            start_letter = st.selectbox("Letra inicial:", LETTERS, index=0)
-            end_letter = st.selectbox("Letra final:", LETTERS, index=4)
-            start_idx = LETTERS.index(start_letter)
-            end_idx = LETTERS.index(end_letter)
-            letters_to_test = LETTERS[start_idx:end_idx+1]
-        else:
-            letters_to_test = LETTERS
-        
-        st.write(f"**Letras a probar:** {len(letters_to_test)}")
-        st.write(f"**Lista:** {', '.join(letters_to_test[:10])}{'...' if len(letters_to_test) > 10 else ''}")
-        
-        if st.button("🚀 Ejecutar Test Sistemático"):
-            run_systematic_test(letters_to_test, models)
-    
-    with col2:
-        if 'systematic_results' in st.session_state:
-            display_systematic_results(st.session_state.systematic_results)
 
-def test_internal_analysis(models):
-    """Análisis interno del modelo"""
-    st.subheader("📊 Análisis Interno del Modelo")
-    
-    # Detalles de arquitectura
-    with st.expander("🏗️ Detalles de Arquitectura CORnet-Z"):
-        model = models['tiny_recognizer']
-        
-        st.code(f"""
-# TinyRecognizer Architecture
-TinyRecognizer(
-  (cornet): CORnet_Z(
-    (V1): CORblock_Z(Conv2d(3, 64, 7), ReLU, MaxPool2d(3))
-    (V2): CORblock_Z(Conv2d(64, 128, 3), ReLU, MaxPool2d(3))  
-    (V4): CORblock_Z(Conv2d(128, 256, 3), ReLU, MaxPool2d(3))
-    (IT): CORblock_Z(Conv2d(256, 512, 3), ReLU, MaxPool2d(3))
-    (decoder): Sequential(
-      (avgpool): AdaptiveAvgPool2d(1)
-      (flatten): Flatten()
-      (linear_input): Linear(512, 1024)
-      (relu): ReLU()
-      (linear_output): Linear(1024, 768)
+        freeze_backbone = st.toggle(
+            "Congelar CORnet-Z",
+            value=False,
+            help="Congela el backbone y entrena solo el clasificador.",
+        )
+
+        submitted = st.form_submit_button("Entrenar TinyRecognizer", type="primary")
+
+    if submitted:
+        config = TrainingConfig(
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            max_epochs=max_epochs,
+            num_workers=num_workers,
+            seed=seed,
+            freeze_backbone=freeze_backbone,
+            accelerator=accelerator,
+        )
+        with st.spinner("Ejecutando entrenamiento..."):
+            try:
+                result = run_training(config)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Entrenamiento falló: {exc}")
+                return
+        st.success("Entrenamiento completado")
+        if result.get("fallback_reason") == "cuda_kernel_missing":
+            st.warning(
+                "Se detectó un error de CUDA. El entrenamiento se reintentó automáticamente en CPU."  # noqa: E501
+            )
+        st.caption(f"Acelerador usado: {result.get('accelerator', accelerator)}")
+        st.session_state["recognizer_training_result"] = result
+        st.json(result["config"])
+
+
+def render_analytics_tab() -> None:
+    result = st.session_state.get("recognizer_training_result")
+    if not result:
+        st.info("Aún no hay corridas de entrenamiento registradas.")
+        return
+
+    st.subheader("📈 Analíticas de TinyRecognizer")
+    duration = result.get("duration")
+    if duration is not None:
+        st.caption(f"Ejecución total: {duration:.1f} s")
+
+    metrics_cols = st.columns(3)
+    val_metrics = result.get("val_metrics", {})
+    test_metrics = result.get("test_metrics", {})
+    metrics_cols[0].metric("Val loss", f"{val_metrics.get('val_loss', float('nan')):.4f}" if val_metrics else "—")
+    metrics_cols[1].metric(
+        "Val top-1",
+        f"{val_metrics.get('val_top1', float('nan')):.2f}%" if val_metrics else "—",
     )
-  )
-  (classifier): Linear(768, 26)
-)
+    metrics_cols[2].metric(
+        "Test top-1",
+        f"{test_metrics.get('test_top1', float('nan')):.2f}%" if test_metrics else "—",
+    )
 
-# Distribución de parámetros:
-CORnet backbone: {sum(p.numel() for p in model.cornet.parameters()):,} parámetros
-Classifier: {sum(p.numel() for p in model.classifier.parameters()):,} parámetros
-Total: {sum(p.numel() for p in model.parameters()):,} parámetros
-        """)
-    
-    # Visualización de activaciones
-    with st.expander("🧠 Análisis de Activaciones"):
-        st.markdown("#### 📊 Test con Imagen de Ejemplo")
-        
-        # Crear imagen de prueba simple
-        if st.button("🔬 Analizar Activaciones Internas"):
-            analyze_internal_activations(models)
+    train_history = result.get("train_history", [])
+    val_history = result.get("val_history", [])
+    if train_history or val_history:
+        st.markdown("#### Curvas de entrenamiento")
+        history_frames = []
+        if train_history:
+            df_train = pd.DataFrame(train_history)
+            df_train["split"] = "train"
+            history_frames.append(df_train)
+        if val_history:
+            df_val = pd.DataFrame(val_history)
+            df_val["split"] = "val"
+            history_frames.append(df_val)
+        history_df = pd.concat(history_frames, ignore_index=True)
+        loss_cols = [col for col in history_df.columns if col.endswith("loss")]
+        if loss_cols:
+            loss_df = history_df.melt(
+                id_vars=["epoch", "split"],
+                value_vars=loss_cols,
+                var_name="metric",
+                value_name="value",
+            ).dropna(subset=["value"])
+            if not loss_df.empty:
+                chart_data = loss_df.pivot_table(index="epoch", columns="metric", values="value")
+                st.line_chart(chart_data)
 
-def analyze_image(image, models, title="Imagen"):
-    """Analiza una imagen con el modelo"""
-    try:
-        # Preprocesar imagen
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        
-        transform = Compose([
-            Resize((28, 28)),
-            ToTensor(),
-            Normalize(mean, std)
-        ])
-        
-        # Convertir y procesar imagen
-        image_tensor = transform(image).unsqueeze(0).to(models['device'])
-        
-        # Mostrar imagen preprocesada
-        st.markdown("#### 🔄 Imagen Preprocesada")
-        processed_img = image_tensor.squeeze().cpu()
-        # Denormalizar para visualización
-        for i in range(3):
-            processed_img[i] = processed_img[i] * std[i] + mean[i]
-        processed_img = torch.clamp(processed_img, 0, 1)
-        
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-        ax1.imshow(image)
-        ax1.set_title("Original")
-        ax1.axis('off')
-        
-        ax2.imshow(processed_img.permute(1, 2, 0))
-        ax2.set_title("Preprocesada (28x28)")
-        ax2.axis('off')
-        
-        st.pyplot(fig)
-        
-        # Hacer predicción
-        models['tiny_recognizer'].eval()
-        with torch.no_grad():
-            logits, embeddings = models['tiny_recognizer'](image_tensor)
-        
-        # Mostrar resultados
-        display_image_results(logits, embeddings, models, title)
-        
-    except Exception as e:
-        st.error(f"❌ Error procesando imagen: {str(e)}")
+        acc_cols = [col for col in history_df.columns if col.endswith("top1")]
+        if acc_cols:
+            acc_df = history_df.melt(
+                id_vars=["epoch", "split"],
+                value_vars=acc_cols,
+                var_name="metric",
+                value_name="value",
+            ).dropna(subset=["value"])
+            if not acc_df.empty:
+                chart_data = acc_df.pivot_table(index="epoch", columns="metric", values="value")
+                st.line_chart(chart_data)
 
-def display_image_results(logits, embeddings, models, title):
-    """Muestra resultados de reconocimiento de imagen"""
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("#### 🎯 Resultados de Predicción")
-        
-        # Predicción principal
-        predicted_idx = logits.argmax(dim=1).item()
-        predicted_letter = LETTERS[predicted_idx].upper()
-        confidence = torch.softmax(logits, dim=1).max().item()
-        
-        st.metric("🎯 Letra Predicha", predicted_letter, help=f"Confianza: {confidence:.2%}")
-        
-        # Top 5
-        probabilities = torch.softmax(logits, dim=1).squeeze().cpu().numpy()
-        top_indices = np.argsort(probabilities)[::-1][:5]
-        
-        st.markdown("**🏆 Top 5:**")
-        for i, idx in enumerate(top_indices):
-            letter = LETTERS[idx].upper()
-            prob = probabilities[idx]
-            emoji = "🎯" if i == 0 else "📍"
-            st.write(f"{emoji} **{letter}** ({prob:.2%})")
-    
-    with col2:
-        st.markdown("#### 🧠 Embedding Visual")
-        
-        # Visualizar embedding como imagen
-        embedding_2d = embeddings.squeeze().cpu().numpy()
-        
-        # Reshape a una forma cuadrada aproximada
-        dim = int(np.sqrt(len(embedding_2d)))
-        if dim * dim < len(embedding_2d):
-            # Pad con ceros si es necesario
-            pad_size = (dim + 1) * (dim + 1) - len(embedding_2d)
-            embedding_2d = np.pad(embedding_2d, (0, pad_size))
-            dim = dim + 1
-        
-        embedding_img = embedding_2d[:dim*dim].reshape(dim, dim)
-        
-        fig, ax = plt.subplots(figsize=(6, 6))
-        im = ax.imshow(embedding_img, cmap='coolwarm')
-        ax.set_title(f"Representación Interna ({len(embedding_2d)} dim)")
-        plt.colorbar(im)
+    matrix = np.asarray(result.get("confusion_matrix", []))
+    class_names = result.get("class_names", [])
+    if matrix.size and class_names:
+        st.markdown("#### Matriz de confusión")
+        fig = plot_confusion(matrix, class_names)
         st.pyplot(fig)
 
-def generate_sample_letter(models):
-    """Genera una letra de muestra simple"""
-    st.info("🎲 Generando letra de muestra...")
-    
-    # Por ahora crear una imagen simple con PIL
-    from PIL import Image, ImageDraw, ImageFont
-    
-    # Crear imagen simple
-    img = Image.new('RGB', (28, 28), 'white')
-    draw = ImageDraw.Draw(img)
-    
-    # Dibujar una letra simple (por ejemplo 'A')
-    letter = np.random.choice(LETTERS).upper()
-    
-    try:
-        # Intentar usar fuente del sistema
-        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 20)
-    except:
-        # Fallback a fuente por defecto
-        font = ImageFont.load_default()
-    
-    # Centrar el texto
-    bbox = draw.textbbox((0, 0), letter, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    x = (28 - text_width) // 2
-    y = (28 - text_height) // 2
-    
-    draw.text((x, y), letter, fill='black', font=font)
-    
-    st.success(f"✅ Letra generada: **{letter}**")
-    analyze_image(img, models, f"Letra Generada: {letter}")
+        per_class = result.get("per_class_accuracy", [])
+        if per_class:
+            acc_df = pd.DataFrame(
+                {
+                    "letra": class_names,
+                    "accuracy": per_class,
+                    "muestras": matrix.sum(axis=1).tolist(),
+                }
+            )
+            acc_df["accuracy_pct"] = acc_df["accuracy"] * 100
+            st.dataframe(acc_df, use_container_width=True)
 
-def run_systematic_test(letters_to_test, models):
-    """Ejecuta test sistemático en múltiples letras"""
-    st.info(f"🔄 Ejecutando test en {len(letters_to_test)} letras...")
-    
-    results = []
-    progress_bar = st.progress(0)
-    
-    for i, letter in enumerate(letters_to_test):
-        # Generar imagen de la letra
-        img = Image.new('RGB', (28, 28), 'white')
-        draw = ImageDraw.Draw(img)
-        
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 20)
-        except:
-            font = ImageFont.load_default()
-        
-        # Dibujar letra
-        bbox = draw.textbbox((0, 0), letter.upper(), font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        
-        x = (28 - text_width) // 2
-        y = (28 - text_height) // 2
-        
-        draw.text((x, y), letter.upper(), fill='black', font=font)
-        
-        # Analizar con el modelo
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        
-        transform = Compose([
-            Resize((28, 28)),
-            ToTensor(),
-            Normalize(mean, std)
-        ])
-        
-        image_tensor = transform(img).unsqueeze(0).to(models['device'])
-        
-        models['tiny_recognizer'].eval()
-        with torch.no_grad():
-            logits, _ = models['tiny_recognizer'](image_tensor)
-        
-        predicted_idx = logits.argmax(dim=1).item()
-        predicted_letter = LETTERS[predicted_idx]
-        confidence = torch.softmax(logits, dim=1).max().item()
-        
-        results.append({
-            'true_letter': letter,
-            'predicted_letter': predicted_letter,
-            'confidence': confidence,
-            'correct': letter == predicted_letter
-        })
-        
-        progress_bar.progress((i + 1) / len(letters_to_test))
-    
-    # Guardar resultados
-    st.session_state.systematic_results = results
-    st.success("✅ Test sistemático completado!")
+    errors = result.get("misclassifications", [])
+    if errors:
+        st.markdown("#### Errores más confiados")
+        st.table(pd.DataFrame(errors))
 
-def display_systematic_results(results):
-    """Muestra resultados del test sistemático"""
-    st.markdown("#### 📊 Resultados del Test Sistemático")
-    
-    # Métricas generales
-    total = len(results)
-    correct = sum(1 for r in results if r['correct'])
-    accuracy = correct / total if total > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("🎯 Precisión", f"{accuracy:.2%}")
-    with col2:
-        st.metric("✅ Correctas", f"{correct}/{total}")
-    with col3:
-        st.metric("📊 Confianza Promedio", f"{np.mean([r['confidence'] for r in results]):.2%}")
-    
-    # Tabla de resultados
-    st.markdown("#### 📋 Resultados Detallados")
-    
-    import pandas as pd
-    df = pd.DataFrame(results)
-    df['status'] = df['correct'].apply(lambda x: '✅' if x else '❌')
-    df['confidence_pct'] = df['confidence'].apply(lambda x: f"{x:.2%}")
-    
-    st.dataframe(
-        df[['true_letter', 'predicted_letter', 'confidence_pct', 'status']].rename(columns={
-            'true_letter': 'Letra Real',
-            'predicted_letter': 'Predicción',
-            'confidence_pct': 'Confianza',
-            'status': 'Estado'
-        }),
-        width='stretch'
+
+def main() -> None:
+    st.set_page_config(page_title="TinyRecognizer", page_icon="🖼️", layout="wide")
+    display_modern_sidebar()
+    st.title("🖼️ TinyRecognizer")
+
+    device = str(encontrar_device())
+    splits, error = load_visual_splits()
+    if error or not splits:
+        st.error(
+            "No se pudo cargar el dataset visual. Genera imágenes desde `🖼️ Visual Dataset Manager` y vuelve a intentarlo.\n\n"
+            f"Detalle: {error}"
+        )
+        return
+
+    st.session_state["recognizer_class_names"] = splits["train"].letters
+
+    dataset_tab, training_tab, analytics_tab = st.tabs(
+        ["📚 Dataset & Modelo", "⚙️ Entrenamiento", "📈 Analíticas"]
     )
-    
-    # Matriz de confusión simple
-    if len(results) > 1:
-        st.markdown("#### 🔍 Análisis de Errores")
-        errors = [r for r in results if not r['correct']]
-        if errors:
-            st.write(f"**Errores encontrados:** {len(errors)}")
-            for error in errors[:5]:  # Mostrar primeros 5 errores
-                st.write(f"• {error['true_letter']} → {error['predicted_letter']} (conf: {error['confidence']:.2%})")
-        else:
-            st.success("🎉 ¡Sin errores detectados!")
 
-def analyze_internal_activations(models):
-    """Analiza las activaciones internas del modelo"""
-    # Crear una imagen de prueba
-    img = Image.new('RGB', (28, 28), 'white')
-    draw = ImageDraw.Draw(img)
-    
-    # Dibujar una 'A' simple
-    draw.text((8, 5), 'A', fill='black')
-    
-    # Procesar imagen
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    
-    transform = Compose([
-        Resize((28, 28)),
-        ToTensor(),
-        Normalize(mean, std)
-    ])
-    
-    image_tensor = transform(img).unsqueeze(0).to(models['device'])
-    
-    # Extraer activaciones de cada capa
-    model = models['tiny_recognizer']
-    
-    # Hook para capturar activaciones
-    activations = {}
-    def get_activation(name):
-        def hook(model, input, output):
-            activations[name] = output.detach()
-        return hook
-    
-    # Registrar hooks
-    model.cornet.V1.register_forward_hook(get_activation('V1'))
-    model.cornet.V2.register_forward_hook(get_activation('V2'))
-    model.cornet.V4.register_forward_hook(get_activation('V4'))
-    model.cornet.IT.register_forward_hook(get_activation('IT'))
-    
-    # Forward pass
-    model.eval()
-    with torch.no_grad():
-        logits, embeddings = model(image_tensor)
-    
-    # Visualizar activaciones
-    st.success("✅ Activaciones capturadas!")
-    
-    for layer_name, activation in activations.items():
-        st.markdown(f"#### 🧠 Activaciones {layer_name}")
-        
-        # Tomar los primeros canales para visualización
-        act = activation.squeeze().cpu().numpy()
-        if len(act.shape) == 3:  # [channels, height, width]
-            n_channels_to_show = min(8, act.shape[0])
-            
-            fig, axes = plt.subplots(2, 4, figsize=(12, 6))
-            axes = axes.flatten()
-            
-            for i in range(n_channels_to_show):
-                axes[i].imshow(act[i], cmap='viridis')
-                axes[i].set_title(f'Canal {i}')
-                axes[i].axis('off')
-            
-            # Ocultar ejes no usados
-            for i in range(n_channels_to_show, 8):
-                axes[i].axis('off')
-            
-            st.pyplot(fig)
-            st.write(f"Shape: {act.shape} | Channels mostrados: {n_channels_to_show}")
+    with dataset_tab:
+        render_dataset_tab(splits, device=device)
+    with training_tab:
+        render_training_tab(splits["train"].num_classes)
+    with analytics_tab:
+        render_analytics_tab()
+
 
 if __name__ == "__main__":
     main()

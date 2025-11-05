@@ -65,6 +65,40 @@ st.markdown("""
     text-align: center;
 }
 
+.vocab-card {
+    text-align: left;
+}
+
+.vocab-card h2 {
+    margin-bottom: 0.35rem;
+}
+
+.vocab-meta {
+    font-size: 0.9rem;
+    margin: 0.15rem 0;
+    font-weight: 400;
+}
+
+.chip-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
+}
+
+.vocab-chip {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    padding: 0.25rem 0.8rem;
+    font-size: 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(6px);
+}
+
+.more-chip {
+    background: rgba(0, 0, 0, 0.25);
+}
+
 .status-success {
     background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
     color: white;
@@ -254,13 +288,38 @@ def show_general_summary(visual_config, df_detailed):
         """, unsafe_allow_html=True)
     
     with metrics_col4:
-        vocabulary_name = visual_config.get('vocabulary', 'N/A')
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>📚 Vocabulario</h3>
-            <h2>{vocabulary_name}</h2>
-        </div>
-        """, unsafe_allow_html=True)
+        vocabulary_data = visual_config.get('vocabulary')
+        if isinstance(vocabulary_data, dict):
+            vocab_name = vocabulary_data.get('nombre', 'Sin nombre')
+            vocab_desc = vocabulary_data.get('descripcion', '')
+            vocab_type = vocabulary_data.get('tipo', 'personalizado')
+            vocab_words = vocabulary_data.get('palabras', []) or []
+            word_count = len(vocab_words)
+            preview_words = vocab_words[:6]
+            extra_count = max(word_count - len(preview_words), 0)
+            chips_html = ''.join(f'<span class="vocab-chip">{word}</span>' for word in preview_words)
+            if extra_count:
+                chips_html += f'<span class="vocab-chip more-chip">+{extra_count} más</span>'
+
+            st.markdown(f"""
+            <div class="metric-card vocab-card">
+                <h3>📚 Vocabulario</h3>
+                <h2>{vocab_name}</h2>
+                <p class="vocab-meta">{vocab_desc}</p>
+                <p class="vocab-meta">Tipo: <strong>{vocab_type.title()}</strong> · Palabras: <strong>{word_count}</strong></p>
+                <div class="chip-container">
+                    {chips_html if chips_html else '<span class="vocab-chip">Sin palabras registradas</span>'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            vocabulary_name = vocabulary_data or 'N/A'
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>📚 Vocabulario</h3>
+                <h2>{vocabulary_name}</h2>
+            </div>
+            """, unsafe_allow_html=True)
     
     # Gráficos de resumen
     st.markdown("---")

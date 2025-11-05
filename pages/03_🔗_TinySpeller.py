@@ -1,133 +1,325 @@
-"""
-🔗 TinySpeller - Modelo Multimodal
-Página para testing del modelo que combina visión y audio
-"""
+from __future__ import annotations
+
+import random
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
 
 import streamlit as st
 import torch
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import matplotlib.pyplot as plt
-import tempfile
-import os
-from torchvision.transforms import Compose, ToTensor, Resize, Normalize
+from PIL import Image
+from torchvision import transforms
 
-# Importar módulos
-from models import TinySpeak, TinyListener, TinyRecognizer, TinySpeller
-from utils import (
-    encontrar_device, load_wav2vec_model, get_default_words, 
-    synthesize_word, save_waveform_to_audio_file, WAV2VEC_SR, WAV2VEC_DIM, LETTERS
-)
-
-# Importar sidebar moderna
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
 from components.modern_sidebar import display_modern_sidebar
-
-# Configurar página
-st.set_page_config(
-    page_title="TinySpeller - Multimodal AI",
-    page_icon="🔗",
-    layout="wide"
+from models import TinyListener, TinyRecognizer, TinySpeak, TinySpeller
+from training.audio_dataset import (
+    DEFAULT_AUDIO_SPLIT_RATIOS,
+    AudioSample,
+    AudioWordDataset,
+    build_audio_datasets,
+)
+from training.config import load_master_dataset_config
+from training.visual_dataset import DEFAULT_SPLIT_RATIOS, VisualLetterDataset
+from utils import (
+    WAV2VEC_DIM,
+    WAV2VEC_SR,
+    encontrar_device,
+    get_default_words,
+    load_wav2vec_model,
+    plot_logits_native,
+    save_waveform_to_audio_file,
 )
 
-@st.cache_resource
-def load_multimodal_models():
-    """Cargar todos los modelos para funcionalidad multimodal"""
+
+st.set_page_config(page_title="TinySpeller - Multimodal Bridge", page_icon="🔗", layout="wide")
+
+DEFAULT_SEED = 42
+LETTER_TRANSFORM = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
+
+
+@st.cache_resource(show_spinner=False)
+def get_active_words() -> List[str]:
+    try:
+        config = load_master_dataset_config()
+        selected = config.get("diccionario_seleccionado") or {}
+        words = selected.get("palabras") or []
+        if isinstance(words, Sequence) and words:
+            return list(dict.fromkeys([w.strip().lower() for w in words if w]))
+    except Exception:  # noqa: BLE001
+        pass
+    return get_default_words()
+
+
+@st.cache_resource(show_spinner=False)
+def load_audio_index(seed: int = DEFAULT_SEED) -> Tuple[Dict[str, List[Dict]], List[str], str | None]:
+    try:
+        datasets = build_audio_datasets(seed=seed, split_ratios=DEFAULT_AUDIO_SPLIT_RATIOS)
+    except Exception as exc:  # noqa: BLE001
+        return {}, [], str(exc)
+
+    index: Dict[str, List[Dict]] = {}
+    for split_name, dataset in datasets.items():
+        entries: List[Dict] = []
+        for sample in dataset.samples:
+            entries.append(
+                {
+                    "word": sample.word,
+                    "waveform": sample.waveform.clone(),
+                    "duration_ms": sample.duration_ms,
+                    "metadata": sample.metadata,
+                    "split": split_name,
+                }
+            )
+        index[split_name] = entries
+
+    train_ds = datasets.get("train")
+    words = train_ds.words if isinstance(train_ds, AudioWordDataset) else []
+    return index, words, None
+
+
+@st.cache_resource(show_spinner=False)
+def load_visual_index(seed: int = DEFAULT_SEED, split: str = "train") -> Tuple[Dict[str, List[str]], str | None]:
+    try:
+        dataset = VisualLetterDataset(
+            split=split,
+            augment=False,
+            seed=seed,
+            split_ratios=DEFAULT_SPLIT_RATIOS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {}, str(exc)
+
+    index: Dict[str, List[str]] = {}
+    for sample in dataset.samples:
+        index.setdefault(sample.letter, []).append(str(sample.path))
+    return index, None
+
+
+@st.cache_resource(show_spinner=False)
+def load_multimodal_stack() -> Dict:
     device = encontrar_device()
-    
-    # Wav2Vec2 para audio
+    words = get_active_words()
+
     wav2vec_model = load_wav2vec_model(device=device)
-    words = get_default_words()
-    
-    # Modelos principales
-    tiny_speak = TinySpeak(words=words, hidden_dim=64, num_layers=2, wav2vec_dim=WAV2VEC_DIM)
-    tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model)
-    tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
-    tiny_speller = TinySpeller(tiny_recognizer=tiny_recognizer, tiny_speak=tiny_speak)
-    
-    # Mover al dispositivo
-    tiny_speak = tiny_speak.to(device)
-    tiny_listener = tiny_listener.to(device)
-    tiny_recognizer = tiny_recognizer.to(device)
-    tiny_speller = tiny_speller.to(device)
-    
+    tiny_speak = TinySpeak(words=words, hidden_dim=128, num_layers=2, wav2vec_dim=WAV2VEC_DIM).to(device)
+    tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model).to(device)
+    tiny_recognizer = TinyRecognizer().to(device)
+    tiny_speller = TinySpeller(tiny_recognizer=tiny_recognizer, tiny_speak=tiny_speak).to(device)
+
+    tiny_listener.eval()
+    tiny_speller.eval()
+
     return {
-        'device': device,
-        'wav2vec_model': wav2vec_model,
-        'tiny_speak': tiny_speak,
-        'tiny_listener': tiny_listener,
-        'tiny_recognizer': tiny_recognizer,
-        'tiny_speller': tiny_speller,
-        'words': words
+        "device": device,
+        "words": words,
+        "tiny_listener": tiny_listener,
+        "tiny_speller": tiny_speller,
+        "image_transform": LETTER_TRANSFORM,
     }
 
-def main():
-    # Sidebar modernizada persistente
+
+@dataclass
+class MultimodalResult:
+    word: str
+    audio_prediction: str
+    audio_confidence: float
+    audio_logits: torch.Tensor
+    speller_prediction: str
+    speller_confidence: float
+    speller_logits: torch.Tensor
+    letter_paths: List[str]
+    audio_split: str
+    audio_duration_ms: float | None
+
+
+def pick_audio_example(word: str, audio_index: Dict[str, List[Dict]], rng: random.Random) -> Dict | None:
+    candidates: List[Dict] = []
+    for entries in audio_index.values():
+        candidates.extend([entry for entry in entries if entry["word"] == word])
+    if not candidates:
+        return None
+    return rng.choice(candidates)
+
+
+def pick_letter_sequence(word: str, visual_index: Dict[str, List[str]], rng: random.Random) -> Tuple[List[str], str | None]:
+    chosen: List[str] = []
+    for letter in word:
+        options = visual_index.get(letter)
+        if not options:
+            return [], letter
+        chosen.append(rng.choice(options))
+    return chosen, None
+
+
+def run_multimodal_inference(
+    word: str,
+    seed: int,
+    models: Dict,
+    audio_index: Dict[str, List[Dict]],
+    visual_index: Dict[str, List[str]],
+) -> MultimodalResult:
+    rng = random.Random(seed)
+
+    audio_entry = pick_audio_example(word, audio_index, rng)
+    if audio_entry is None:
+        raise RuntimeError(f"No hay audio disponible para '{word}'.")
+
+    letter_paths, missing_letter = pick_letter_sequence(word, visual_index, rng)
+    if missing_letter is not None:
+        raise RuntimeError(f"No hay imágenes registradas para la letra '{missing_letter}'.")
+
+    device = models["device"]
+    listener: TinyListener = models["tiny_listener"]
+    speller: TinySpeller = models["tiny_speller"]
+
+    waveform: torch.Tensor = audio_entry["waveform"].to(device)
+    listener.eval()
+    with torch.no_grad():
+        audio_logits, _ = listener([waveform])
+    audio_probs = torch.softmax(audio_logits, dim=-1).squeeze(0)
+    audio_top = torch.argmax(audio_probs).item()
+
+    image_tensors: List[torch.Tensor] = []
+    for path in letter_paths:
+        image = Image.open(Path(path)).convert("RGB")
+        image_tensors.append(models["image_transform"](image))
+    sequence = torch.stack(image_tensors).unsqueeze(0).to(device)
+
+    speller.eval()
+    with torch.no_grad():
+        speller_logits, _ = speller(sequence)
+    speller_probs = torch.softmax(speller_logits, dim=-1).squeeze(0)
+    speller_top = torch.argmax(speller_probs).item()
+
+    words = models["words"]
+    audio_prediction = words[audio_top] if words else "—"
+    speller_prediction = words[speller_top] if words else "—"
+
+    return MultimodalResult(
+        word=word,
+        audio_prediction=audio_prediction,
+        audio_confidence=float(audio_probs[audio_top].item()),
+        audio_logits=audio_logits.squeeze(0).cpu(),
+        speller_prediction=speller_prediction,
+        speller_confidence=float(speller_probs[speller_top].item()),
+        speller_logits=speller_logits.squeeze(0).cpu(),
+        letter_paths=letter_paths,
+        audio_split=audio_entry["split"],
+        audio_duration_ms=audio_entry["duration_ms"],
+    )
+
+
+def render_result(result: MultimodalResult, words: List[str]) -> None:
+    st.markdown("### Resultados de inferencia")
+
+    match = result.audio_prediction == result.speller_prediction
+    status = "🎯 Ambas modalidades coinciden" if match else "⚠️ Predicciones diferentes"
+    st.info(f"{status}: audio → **{result.audio_prediction}**, visión → **{result.speller_prediction}**")
+
+    audio_col, vision_col = st.columns(2)
+    with audio_col:
+        st.markdown("#### 🎵 TinyListener")
+        st.metric("Predicción", result.audio_prediction, f"{result.audio_confidence:.2%}")
+        st.caption(f"Split seleccionado: {result.audio_split} · Duración: {result.audio_duration_ms or 0:.0f} ms")
+        st.plotly_chart(plot_logits_native(result.audio_logits, words), use_container_width=True)
+
+    with vision_col:
+        st.markdown("#### 🖼️ TinySpeller")
+        st.metric("Predicción", result.speller_prediction, f"{result.speller_confidence:.2%}")
+        st.plotly_chart(plot_logits_native(result.speller_logits, words), use_container_width=True)
+
+    st.markdown("#### 🔤 Secuencia de letras utilizada")
+    letter_cols = st.columns(len(result.letter_paths)) if result.letter_paths else []
+    for idx, path in enumerate(result.letter_paths):
+        with letter_cols[idx]:
+            st.image(Image.open(Path(path)), caption=f"Letra {idx + 1}", width=96)
+
+    st.markdown("#### 🎧 Audio reproducido")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        waveform = result.audio_logits.new_tensor([])  # placeholder for typing
+    try:
+        # We reuse the cached waveform through the index by re-running pick without randomness.
+        # Avoid storing full tensor here to keep cache minimal.
+        pass
+    finally:
+        Path(tmp_file.name).unlink(missing_ok=True)
+
+
+def render_audio_player(word: str, audio_index: Dict[str, List[Dict]], seed: int) -> None:
+    rng = random.Random(seed)
+    audio_entry = pick_audio_example(word, audio_index, rng)
+    if audio_entry is None:
+        st.warning("No se pudo mostrar audio de referencia para esta palabra.")
+        return
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        waveform: torch.Tensor = audio_entry["waveform"]
+        if not save_waveform_to_audio_file(waveform, tmp_file.name, WAV2VEC_SR):
+            st.warning("No fue posible renderizar el audio.")
+            return
+        tmp_path = tmp_file.name
+
+    try:
+        with open(tmp_path, "rb") as audio_fp:
+            st.audio(audio_fp.read(), format="audio/wav")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def main() -> None:
     display_modern_sidebar()
-    
-    st.title("🔗 TinySpeller - Reconocimiento Multimodal")
-    
-    # Información del modelo
-    with st.expander("🔍 Arquitectura Multimodal", expanded=True):
-        st.markdown("""
-        ### 🧠 **TinySpeller: Visión + Audio → Palabra**
-        
-        ```
-        📷 Secuencia de Imágenes (Letras)     🎵 Audio Directo
-                    ↓                              ↓
-        🖼️ TinyRecognizer (CORnet-Z)         🎤 TinyListener (Wav2Vec2+LSTM)
-        - Reconoce letra individual              - Audio → Embedding 768D
-        - Output: Embedding 768D                 - Clasificador → Palabra directa
-                    ↓                              
-        🔄 Secuencia de Embeddings                
-        - [embed_L1, embed_L2, ..., embed_Ln]    
-                    ↓                              
-        📝 TinySpeak (LSTM + Clasificador)        
-        - Procesa secuencia de embeddings         
-        - Output: Palabra predicha                
-        ```
-        
-        ### 🎯 **Casos de Uso:**
-        1. **Imagen → Palabra**: Secuencia de letras manuscritas → palabra completa
-        2. **Audio → Palabra**: Audio hablado → reconocimiento directo  
-        3. **Comparación Multimodal**: Comparar resultados entre modalidades
-        4. **Síntesis + Reconocimiento**: Generar audio → reconocer → validar
-        """)
-    
-    # Cargar modelos
-    if 'multimodal_models' not in st.session_state:
-        with st.spinner("🤖 Cargando modelos multimodales..."):
-            st.session_state.multimodal_models = load_multimodal_models()
-    
-    models = st.session_state.multimodal_models
-    
-    # Métricas del sistema
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🎯 Vocabulario", f"{len(models['words'])} palabras")
-    with col2:
-        st.metric("🔤 Letras", f"{len(LETTERS)} clases")
-    with col3:
-        st.metric("🧠 Parámetros Total", f"{sum(p.numel() for p in models['tiny_speller'].parameters()):,}")
-    with col4:
-        st.metric("🔗 Modalidades", "Visión + Audio")
-    
-    # Pestañas para diferentes tipos de testing
-    tab1, tab2, tab3, tab4 = st.tabs(["🖼️➡️📝 Imagen→Palabra", "🎵➡️📝 Audio→Palabra", "⚖️ Comparación", "🔬 Análisis Avanzado"])
-    
-    with tab1:
-        test_image_to_word(models)
-    
-    with tab2:
-        test_audio_to_word(models)
-        
-    with tab3:
-        test_multimodal_comparison(models)
-        
-    with tab4:
-        test_advanced_analysis(models)
+    st.title("🔗 TinySpeller – Multimodal Bridge")
+    st.caption("Valida palabras combinando audio y visión desde el dataset activo.")
+
+    models = load_multimodal_stack()
+    audio_index, audio_words, audio_error = load_audio_index()
+    visual_index, visual_error = load_visual_index()
+
+    vocab_words = models["words"] if models["words"] else audio_words
+    total_audio = sum(len(entries) for entries in audio_index.values())
+    total_visual = sum(len(paths) for paths in visual_index.values())
+
+    metrics = st.columns(4)
+    metrics[0].metric("Vocabulario activo", f"{len(vocab_words)} palabras")
+    metrics[1].metric("Muestras audio", total_audio)
+    metrics[2].metric("Imágenes letras", total_visual)
+    metrics[3].metric("Dispositivo", str(models["device"]))
+
+    if audio_error:
+        st.warning(f"Audio dataset: {audio_error}")
+    if visual_error:
+        st.warning(f"Visual dataset: {visual_error}")
+
+    st.markdown("---")
+    st.markdown("### Experimento multimodal")
+
+    if not vocab_words:
+        st.error("No hay vocabulario disponible. Configura un diccionario en Dataset Manager.")
+        return
+
+    selection_col, seed_col = st.columns([2, 1])
+    with selection_col:
+        selected_word = st.selectbox("Palabra objetivo", options=vocab_words, index=0)
+    with seed_col:
+        seed_value = st.number_input("Seed aleatoria", value=DEFAULT_SEED, min_value=0, max_value=10_000, step=1)
+
+    if st.button("Ejecutar inferencia multimodal", type="primary"):
+        try:
+            result = run_multimodal_inference(selected_word, seed_value, models, audio_index, visual_index)
+            st.session_state["tiny_speller_result"] = result
+        except Exception as exc:  # noqa: BLE001
+            st.error(str(exc))
+
+    if "tiny_speller_result" in st.session_state:
+        render_result(st.session_state["tiny_speller_result"], vocab_words)
+        st.markdown("---")
+        st.markdown("### 🎧 Escucha rápida del audio seleccionado")
+        render_audio_player(selected_word, audio_index, seed_value)
+
+
+if __name__ == "__main__":
+    main()
 
 def test_image_to_word(models):
     """Test de secuencia de imágenes a palabra"""
