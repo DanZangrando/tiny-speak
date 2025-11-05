@@ -1315,7 +1315,7 @@ def main():
     models = setup_models(autoload=False)
     
     # Sidebar modernizada
-    display_modern_sidebar()
+    display_modern_sidebar("dashboard")
     
     # Header principal
     st.markdown('<h1 class="main-header">🎤 TinySpeak Dashboard</h1>', unsafe_allow_html=True)

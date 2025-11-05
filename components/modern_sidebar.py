@@ -97,7 +97,7 @@ def apply_sidebar_css():
 
 # Función eliminada - mini galería del sidebar removida
 
-def display_modern_sidebar():
+def display_modern_sidebar(page_prefix="default"):
     """Sidebar modernizada y persistente para todas las páginas"""
     
     # Aplicar CSS moderno
@@ -212,31 +212,31 @@ def display_modern_sidebar():
         # Botones que realmente funcionan con Streamlit
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🎵 Audio", key="nav_audio_global", help="Ir a Audio Dataset", width='stretch'):
-                st.switch_page("pages/00_🎵_Audio_Dataset.py")
+            if st.button("🎵 Audio", key=f"nav_audio_global_{page_prefix}", help="Ir a Audio Dataset", width='stretch'):
+                st.switch_page("pages/00_�_Audio_Dataset_Manager.py")
         
         with col2:
-            if st.button("🖼️ Visual", key="nav_visual_global", help="Ir a Visual Dataset Manager", width='stretch'):
+            if st.button("🖼️ Visual", key=f"nav_visual_global_{page_prefix}", help="Ir a Visual Dataset Manager", width='stretch'):
                 st.switch_page("pages/00_🖼️_Visual_Dataset_Manager.py")
         
         # Analytics navegación
         col3, col4 = st.columns(2)
         with col3:
-            if st.button("🎵 Analytics", key="nav_audio_analytics_global", help="Audio Analytics", width='stretch'):
-                st.switch_page("pages/01_🎵_Audio_Analytics.py")
+            if st.button("🎵 Analytics", key=f"nav_audio_analytics_global_{page_prefix}", help="Audio Analytics", width='stretch'):
+                st.switch_page("pages/01_📊_Audio_Analytics.py")
         
         with col4:
-            if st.button("📊 Analytics", key="nav_visual_analytics_global", help="Visual Analytics", width='stretch'):
+            if st.button("📊 Analytics", key=f"nav_visual_analytics_global_{page_prefix}", help="Visual Analytics", width='stretch'):
                 st.switch_page("pages/01_🖼️_Visual_Analytics.py")
         
         # Más botones de navegación
-        if st.button("� TinyListener", key="nav_listener_global", width='stretch'):
-            st.switch_page("pages/01_�_TinyListener.py")
+        if st.button("🎵 TinyListener", key=f"nav_listener_global_{page_prefix}", width='stretch'):
+            st.switch_page("pages/01_🎵_TinyListener.py")
         
-        if st.button("�️ TinyRecognizer", key="nav_recognizer_global", width='stretch'):
-            st.switch_page("pages/02_�️_TinyRecognizer.py")
+        if st.button("🖼️ TinyRecognizer", key=f"nav_recognizer_global_{page_prefix}", width='stretch'):
+            st.switch_page("pages/02_🖼️_TinyRecognizer.py")
         
-        if st.button("🔗 TinySpeller", key="nav_speller_global", width='stretch'):
+        if st.button("🔗 TinySpeller", key=f"nav_speller_global_{page_prefix}", width='stretch'):
             st.switch_page("pages/03_🔗_TinySpeller.py")
         
         # Botón para ir al Dashboard principal

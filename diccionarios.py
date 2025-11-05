@@ -29,12 +29,7 @@ DICCIONARIOS_PREDEFINIDOS = {
             'comunicar', 'con', 'conciencia', 'concurso', 'condición', 'conducir', 'conectar', 'conocer',
             'conseguir', 'consejo', 'consentir', 'considerar', 'constar', 'construir', 'contagiar',
             'contar', 'contento', 'contestar', 'continuar', 'contra', 'control', 'conversación',
-            'convertir', 'corazón', 'corriente', 'costar', 'crecer', 'creer', 'cruz', 'cruzar',
-            'cuadro', 'cual', 'cualquier', 'cuando', 'cuanto', 'cuarto', 'cuenta', 'cuerpo', 'cuestión',
-            'cuidar', 'culpa', 'cumplir', 'curso', 'dar', 'darse', 'dato', 'deber', 'decidir',
-            'decir', 'dedo', 'dejar', 'delante', 'dentro', 'derecho', 'desarrollar', 'descansar',
-            'descubrir', 'desde', 'desear', 'despedir', 'después', 'destino', 'detener', 'detrás',
-            'devolver', 'día', 'dibujar', 'dinero', 'dirección', 'dirigir', 'disgustar', 'disfrutar'
+            'convertir', 'corazón', 'corriente', 'costar', 'crecer'
         ]
     },
     

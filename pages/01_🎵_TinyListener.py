@@ -244,7 +244,7 @@ def _run_training_once(config: TrainingConfig) -> Dict:
         accelerator=accelerator,
         devices=devices,
         max_epochs=config.max_epochs,
-        deterministic=True,
+        deterministic=False,  # Cambiar a False para evitar warnings de CUDA
         enable_checkpointing=False,
         enable_model_summary=False,
         log_every_n_steps=1,
@@ -705,7 +705,7 @@ def render_lab_tab(models: Dict) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="TinyListener", page_icon="🎵", layout="wide")
-    display_modern_sidebar()
+    display_modern_sidebar("tiny_listener")
     st.title("🎵 TinyListener")
 
     device = str(encontrar_device())

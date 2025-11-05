@@ -1212,7 +1212,7 @@ def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     
     # Sidebar modernizada persistente
-    display_modern_sidebar()
+    display_modern_sidebar("audio_dataset")
     
     # Header moderno
     st.markdown('<h1 class="main-header">🎤 Audio Dataset Manager</h1>', unsafe_allow_html=True)

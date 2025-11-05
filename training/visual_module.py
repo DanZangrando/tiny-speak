@@ -27,6 +27,10 @@ class TinyRecognizerLightning(pl.LightningModule):
         self.save_hyperparameters()
 
         self.model = TinyRecognizer(num_classes=num_classes)
+        
+        # Inicialización simple - solo el clasificador final
+        self._initialize_classifier_only()
+        
         if freeze_backbone:
             for param in self.model.cornet.parameters():
                 param.requires_grad = False
@@ -39,9 +43,18 @@ class TinyRecognizerLightning(pl.LightningModule):
         self._validation_buffer: List[Dict] = []
         self._test_buffer: List[Dict] = []
 
+    def _initialize_classifier_only(self):
+        """Inicialización conservadora - solo la capa de salida final."""
+        # ✅ SIMPLIFICACIÓN: Solo inicializar la capa final del decoder
+        output_layer = self.model.cornet.decoder.output
+        if hasattr(output_layer, 'weight'):
+            torch.nn.init.xavier_normal_(output_layer.weight)
+            if output_layer.bias is not None:
+                torch.nn.init.constant_(output_layer.bias, 0)
+
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        logits, _ = self.model(images)
-        return logits
+        # ✅ SIMPLIFICACIÓN: Forward directo sin desempaquetar
+        return self.model(images)[0]  # Solo tomar los logits
 
     # ------------------------------------------------------------------
     # Training & evaluation steps
@@ -50,7 +63,12 @@ class TinyRecognizerLightning(pl.LightningModule):
         images = batch["image"]
         labels = batch["label"]
         logits = self.forward(images)
-        loss = F.cross_entropy(logits, labels)
+        
+        # Loss principal
+        ce_loss = F.cross_entropy(logits, labels)
+        
+        # Loss simple y directo - sin complicaciones que puedan romper el aprendizaje
+        loss = ce_loss
 
         metrics = self._compute_topk(logits, labels)
         self.log(
@@ -90,17 +108,34 @@ class TinyRecognizerLightning(pl.LightningModule):
     # Optimiser & scheduler
     # ------------------------------------------------------------------
     def configure_optimizers(self):  # noqa: D401
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "interval": "epoch",
-                "frequency": 1,
-            },
-        }
+        # ✅ OPTIMIZADOR CONSERVADOR: Learning rates diferenciados
+        if hasattr(self.model.cornet, 'decoder'):
+            # Parámetros del backbone (pueden estar congelados)
+            backbone_params = []
+            for name, param in self.model.cornet.named_parameters():
+                if 'decoder' not in name and param.requires_grad:
+                    backbone_params.append(param)
+            
+            # Parámetros del decoder (siempre entrenables)
+            decoder_params = list(self.model.cornet.decoder.parameters())
+            
+            # Learning rates diferenciados
+            param_groups = []
+            if backbone_params:
+                param_groups.append({'params': backbone_params, 'lr': self.learning_rate * 0.1})  # 10x menor para backbone
+            if decoder_params:
+                param_groups.append({'params': decoder_params, 'lr': self.learning_rate})  # LR completo para decoder
+            
+            optimizer = torch.optim.AdamW(param_groups, weight_decay=self.weight_decay)
+        else:
+            # Fallback: optimizador simple
+            optimizer = torch.optim.AdamW(
+                self.parameters(), 
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay
+            )
+        
+        return optimizer
 
     # ------------------------------------------------------------------
     # Utilities

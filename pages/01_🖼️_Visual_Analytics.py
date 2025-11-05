@@ -199,7 +199,7 @@ def create_dataframe_from_images(visual_config):
 
 def main():
     # Mostrar sidebar moderna
-    display_modern_sidebar()
+    display_modern_sidebar("visual_analytics")
     
     # Header moderno
     st.markdown('<h1 class="main-header">📊 Visual Analytics</h1>', unsafe_allow_html=True)

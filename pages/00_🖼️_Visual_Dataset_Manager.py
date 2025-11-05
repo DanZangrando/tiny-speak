@@ -507,7 +507,7 @@ def migrate_base64_to_files(config, output_dir="visual_dataset"):
 
 def main():
     # Mostrar sidebar moderna
-    display_modern_sidebar()
+    display_modern_sidebar("visual_dataset")
     
     # Header moderno
     st.markdown('<h1 class="main-header">🖼️ Visual Dataset Manager</h1>', unsafe_allow_html=True)

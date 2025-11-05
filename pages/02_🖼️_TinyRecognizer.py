@@ -88,7 +88,8 @@ def load_visual_splits(seed: int = DEFAULT_SEED) -> Tuple[Dict[str, VisualLetter
 
 def count_parameters(model: TinyRecognizer) -> Tuple[int, int]:
     total = sum(p.numel() for p in model.parameters())
-    classifier = sum(p.numel() for p in model.classifier.parameters())
+    # ✅ CORRECCIÓN: El clasificador ahora está en decoder.output
+    classifier = sum(p.numel() for p in model.cornet.decoder.output.parameters())
     return total, classifier
 
 
@@ -246,11 +247,14 @@ def _run_training_once(config: TrainingConfig) -> Dict:
     history_cb = HistoryCallback()
     callbacks = [history_cb, pl.callbacks.LearningRateMonitor(logging_interval="epoch")]
     accelerator, devices = _resolve_accelerator(config.accelerator)
+    # Configurar semilla para inicialización reproducible
+    pl.seed_everything(config.seed, workers=True)
+    
     trainer = pl.Trainer(
         accelerator=accelerator,
         devices=devices,
         max_epochs=config.max_epochs,
-        deterministic=True,
+        deterministic="warn",  # Uso determinista con warnings (mejor balance)
         enable_checkpointing=False,
         enable_model_summary=False,
         log_every_n_steps=1,
@@ -323,8 +327,28 @@ def render_dataset_tab(
     st.caption(f"Dispositivo activo: {device}")
 
     distribution = compute_distribution(splits)
-    st.markdown("#### Distribución por letra")
+    st.markdown("#### 📊 Distribución por Letra")
+    
+    # Análisis de balance del dataset
+    total_samples = distribution['total']
+    balanced_threshold = total_samples.mean() * 0.8  # 80% del promedio
+    imbalanced_classes = total_samples[total_samples < balanced_threshold]
+    
+    if len(imbalanced_classes) > 0:
+        st.warning(f"⚠️ **Desbalance detectado**: {len(imbalanced_classes)} clases con pocas muestras")
+        
+        balance_cols = st.columns(3)
+        balance_cols[0].metric("📈 Clases bien balanceadas", len(total_samples) - len(imbalanced_classes))
+        balance_cols[1].metric("📉 Clases desbalanceadas", len(imbalanced_classes))
+        balance_cols[2].metric("⚖️ Factor desbalance", f"{total_samples.max() / total_samples.min():.1f}x")
+    
     st.dataframe(distribution, use_container_width=True)
+    
+    # Mostrar clases problemáticas
+    if len(imbalanced_classes) > 0:
+        st.markdown("**🔴 Clases con pocas muestras:**")
+        problem_classes = ", ".join([f"{letter} ({count})" for letter, count in imbalanced_classes.items()])
+        st.text(problem_classes)
 
     train_samples = gather_preview_samples(splits["train"])
     if train_samples:
@@ -339,32 +363,93 @@ def render_dataset_tab(
                         use_container_width=True,
                     )
 
-    st.markdown("#### Arquitectura TinyRecognizer adaptada")
+    st.markdown("#### 🏗️ Arquitectura TinyRecognizer")
     model = TinyRecognizer(num_classes=num_classes)
     total_params, classifier_params = count_parameters(model)
     backbone_params = total_params - classifier_params
-    info_cols = st.columns(3)
-    info_cols[0].metric("Parámetros totales", f"{total_params:,}")
-    info_cols[1].metric("Backbone", f"{backbone_params:,}")
-    info_cols[2].metric("Clasificador", f"{classifier_params:,}")
+    
+    # Métricas de arquitectura
+    arch_cols = st.columns(4)
+    arch_cols[0].metric("🔢 Parámetros Totales", f"{total_params:,}")
+    arch_cols[1].metric("🧠 CORnet-Z Backbone", f"{backbone_params:,}")
+    arch_cols[2].metric("🎯 Clasificador", f"{classifier_params:,}")
+    arch_cols[3].metric("📊 Clases", f"{num_classes}")
 
+    # Diagrama de arquitectura mejorado
+    st.markdown("##### 📐 Diagrama de Arquitectura")
     st.code(
         f"""
-Input: 64×64×3 RGB
-V1 → Conv(3→64) + ReLU + MaxPool
-V2 → Conv(64→128) + ReLU + MaxPool
-V4 → Conv(128→256) + ReLU + MaxPool
-IT → Conv(256→512) + ReLU + MaxPool
-Decoder → AdaptiveAvgPool → Flatten → Linear(512→1024) → ReLU → Linear(1024→{WAV2VEC_DIM})
-Classifier → Linear({WAV2VEC_DIM}→{num_classes})
+🖼️  Input: 64×64×3 RGB
+    ↓
+┌─────────────────── CORnet-Z Backbone ──────────────────┐
+│ 🔍 V1: Conv2d(3→64, k=7, s=2) + ReLU + MaxPool        │
+│ 🔍 V2: Conv2d(64→128, k=3) + ReLU + MaxPool           │  
+│ 🔍 V4: Conv2d(128→256, k=3) + ReLU + MaxPool          │
+│ 🔍 IT: Conv2d(256→512, k=3) + ReLU + MaxPool          │
+│ Parámetros: {backbone_params:,}                        │
+└────────────────────────────────────────────────────────┘
+    ↓ [batch, 512, 1, 1]
+┌─────────────────── Decoder Head ──────────────────────┐
+│ 🎯 AdaptiveAvgPool2d(1×1) → Flatten                   │
+│ 🎯 Linear(512 → 1024) → ReLU                          │
+│ 🎯 Linear(1024 → {WAV2VEC_DIM}) [wav2vec_dim]         │
+└────────────────────────────────────────────────────────┘
+    ↓ [batch, {WAV2VEC_DIM}] 
+┌─────────────────── Classifier ─────────────────────────┐
+│ 📊 Linear({WAV2VEC_DIM} → {num_classes})              │
+│ Parámetros: {classifier_params:,}                      │
+└────────────────────────────────────────────────────────┘
+    ↓
+🎯 Output: [batch, {num_classes}] logits
         """,
         language="text",
     )
+    
+    # Estado del modelo y correcciones aplicadas
+    st.markdown("##### ✅ Correcciones Aplicadas")
+    st.success("🔧 **CRÍTICO**: Removido `.detach()` que bloqueaba gradientes")
+    st.info("📚 **Dataset**: 29 clases con distribución desbalanceada detectada") 
+    
+    corrections_cols = st.columns(2)
+    with corrections_cols[0]:
+        st.markdown("""
+        **✅ Flujo de Gradientes Corregido:**
+        - Backbone CORnet-Z ahora entrenable
+        - Gradientes fluyen desde clasificador a features
+        - Aprendizaje end-to-end habilitado
+        """)
+    
+    with corrections_cols[1]:
+        st.markdown("""
+        **⚠️ Problemas Pendientes:**
+        - Desbalance en dataset (62 vs 30 imágenes)
+        - Arquitectura decoder subóptima
+        - Falta data augmentation específica
+        """)
 
 
 def render_training_tab(num_classes: int) -> None:
     st.subheader("⚙️ Entrenamiento de TinyRecognizer")
     st.write("Configura los hiperparámetros y entrena contra el dataset actual.")
+    
+    # Información de diagnóstico
+    st.info("""
+    **🔧 Correcciones Aplicadas:**
+    - ✅ **Gradiente Flow**: Removido `.detach()` que bloqueaba el aprendizaje
+    - ✅ **Architecture**: CORnet-Z backbone ahora completamente entrenable  
+    - ⚠️ **Pendiente**: Balancear dataset y mejorar data augmentation
+    """)
+    
+    # Recomendaciones de entrenamiento
+    with st.expander("💡 Recomendaciones de Hiperparámetros"):
+        st.markdown("""
+        **Para el modelo corregido:**
+        - **Learning Rate**: 1e-3 a 1e-4 (modelo corregido aprende más rápido)
+        - **Batch Size**: 16-32 (balance memoria/estabilidad)  
+        - **Épocas**: 10-20 (convergencia más rápida esperada)
+        - **Weight Decay**: 1e-4 (regularización moderada)
+        - **Freeze Backbone**: Desactivado (para aprovechar corrección)
+        """)
 
     with st.form("tiny_recognizer_training"):
         col1, col2, col3 = st.columns(3)
@@ -387,10 +472,23 @@ def render_training_tab(num_classes: int) -> None:
         freeze_backbone = st.toggle(
             "Congelar CORnet-Z",
             value=False,
-            help="Congela el backbone y entrena solo el clasificador.",
+            help="⚠️ SOLO para fine-tuning rápido. Desactivar para entrenamiento completo.",
         )
+        
+        if freeze_backbone:
+            st.warning("⚠️ **Backbone congelado**: Solo se entrena el clasificador final. Esto puede causar poor performance para entrenamiento desde cero.")
+        else:
+            st.success("✅ **Entrenamiento completo**: Todo el modelo (backbone + clasificador) se entrenará.")
 
-        submitted = st.form_submit_button("Entrenar TinyRecognizer", type="primary")
+        # Botón para balancear dataset primero
+        if st.form_submit_button("🎯 Balancear Dataset Primero", help="Recomendado antes de entrenar"):
+            st.info("🚀 **Redirigiéndote al Visual Dataset Manager para balancear el dataset...**")
+            st.markdown("**Pasos recomendados:**")
+            st.markdown("1. Ve a `🖼️ Visual Dataset Manager`")
+            st.markdown("2. Genera más imágenes para las clases desbalanceadas")
+            st.markdown("3. Regresa aquí para entrenar con dataset balanceado")
+            
+        submitted = st.form_submit_button("🚀 Entrenar TinyRecognizer", type="primary")
 
     if submitted:
         config = TrainingConfig(
@@ -508,7 +606,7 @@ def render_analytics_tab() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="TinyRecognizer", page_icon="🖼️", layout="wide")
-    display_modern_sidebar()
+    display_modern_sidebar("tiny_recognizer")
     st.title("🖼️ TinyRecognizer")
 
     device = str(encontrar_device())

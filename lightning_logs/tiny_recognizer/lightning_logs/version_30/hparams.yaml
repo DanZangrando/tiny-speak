@@ -1,0 +1,8 @@
+freeze_backbone: false
+learning_rate: 0.041
+num_classes: 29
+topk: !!python/tuple
+- 1
+- 3
+- 5
+weight_decay: 0.0101
