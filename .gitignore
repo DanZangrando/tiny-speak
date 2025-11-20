@@ -142,3 +142,5 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+models/
