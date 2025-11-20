@@ -502,8 +502,8 @@ def display_vocabulary_selector():
             st.caption(f"📊 Variaciones: {config_audio.get('num_variaciones', 'No definido')}")
         
         # Botón para ir a configuración detallada
-        st.markdown("---")
-        st.info("⚙️ Para configuración detallada de parámetros, ve a las páginas de Audio Dataset y Visual Dataset")
+        # st.markdown("---")
+        # st.info("⚙️ Para configuración detallada de parámetros, ve a las páginas de Audio Dataset y Visual Dataset")
 
 def display_system_metrics():
     """Muestra métricas del sistema en tiempo real"""
@@ -563,7 +563,6 @@ def display_system_metrics():
 def display_model_cards():
     """Muestra las tarjetas de información de los modelos"""
     col1, col2 = st.columns(2)
-    metrics = create_model_metrics()
     
     with col1:
         st.markdown("""
@@ -571,15 +570,12 @@ def display_model_cards():
         <h4>🎵 TinyListener</h4>
         <p><strong>Audio → Palabra</strong></p>
         <ul>
-        <li>🤖 Wav2Vec2 + LSTM</li>
-        <li>🎯 ~200 palabras español</li>
-        <li>⚡ Tiempo real</li>
+        <li>🤖 <strong>Base:</strong> Wav2Vec2 (facebook/wav2vec2-base-es-voxpopuli-v2)</li>
+        <li>🧠 <strong>Head:</strong> LSTM (Hidden: 64, Layers: 2)</li>
+        <li>🎯 <strong>Output:</strong> Linear Projection</li>
         </ul>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.metric("Parámetros", metrics['TinyListener']['params'], "Compacto")
-        st.metric("Precisión", metrics['TinyListener']['accuracy'], metrics['TinyListener']['delta'])
         
     with col2:
         st.markdown("""
@@ -587,15 +583,12 @@ def display_model_cards():
         <h4>🖼️ TinyRecognizer</h4>
         <p><strong>Imagen → Letra</strong></p>
         <ul>
-        <li>🧠 CORnet-Z inspirado</li>
-        <li>🔤 26 letras alfabeto</li>
-        <li>📱 Optimizado móvil</li>
+        <li>🧠 <strong>Backbone:</strong> CORnet-Z (V1→V2→V4→IT)</li>
+        <li>🔄 <strong>Decoder:</strong> AvgPool → Flatten → Linear (512→1000)</li>
+        <li>🎯 <strong>Output:</strong> Linear Projection</li>
         </ul>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.metric("Parámetros", metrics['TinyRecognizer']['params'], "Eficiente")
-        st.metric("Precisión", metrics['TinyRecognizer']['accuracy'], metrics['TinyRecognizer']['delta'])
 
 
 
@@ -1316,13 +1309,13 @@ def main():
     st.markdown("---")
     display_dataset_statistics()
     
-    # Gráficos de rendimiento
-    st.markdown("---") 
-    st.markdown("### ⚡ Rendimiento del Sistema")
-    display_performance_charts()
+    # Gráficos de rendimiento (Desactivados)
+    # st.markdown("---") 
+    # st.markdown("### ⚡ Rendimiento del Sistema")
+    # display_performance_charts()
     
-    # Información técnica al final
-    display_technical_info()
+    # Información técnica al final (Desactivada)
+    # display_technical_info()
 
 
 if __name__ == "__main__":
