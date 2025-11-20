@@ -7,7 +7,6 @@
 ### 🧠 **Modelos de IA Integrados**
 - **🎵 TinyListener**: Reconocimiento de palabras usando Wav2Vec2 + LSTM
 - **👁️ TinyRecognizer**: Reconocimiento de letras manuscritas con CORnet-Z 
-- **🔗 TinySpeller**: Sistema multimodal que combina audio y visión secuencial
 
 ### 📚 **Gestión Inteligente de Vocabularios**
 - **Diccionarios Predefinidos**: Kalulu (español), Phones (fonemas), temáticos
@@ -28,7 +27,6 @@
 ### ⚡ **Entrenamiento con PyTorch Lightning**
 - **TinyListener Training**: Entrenamiento completo de reconocimiento de audio
 - **TinyRecognizer Training**: Entrenamiento de reconocimiento visual
-- **TinySpeller Training**: Entrenamiento multimodal con dataloaders personalizados
 - **Callbacks Avanzados**: Early stopping, checkpoints y métricas en tiempo real
 
 ## � Instalación Rápida
@@ -71,17 +69,16 @@ TinySpeak/
 │   └── modern_sidebar.py        # Sidebar con glassmorphism
 ├── 
 ├── 📄 pages/                    # Páginas de la aplicación
-│   ├── 01_🎵_TinyListener.py    # Reconocimiento de audio
-│   ├── 02_👀_TinyRecognizer.py  # Reconocimiento visual
-│   ├── 03_🔗_TinySpeller.py     # Sistema multimodal
-│   ├── 04_🎤_AudioDataset.py    # Generación audio datasets
-│   ├── 05_🖼️_VisualDataset.py   # Generación visual datasets
-│   └── 06_📊_Dashboard.py       # Métricas y analíticas
+│   ├── 01_🎵_Audio_Dataset.py   # Gestión dataset audio
+│   ├── 02_🖼️_Visual_Dataset.py  # Gestión dataset visual
+│   ├── 03_🎵_Audio_Analytics.py # Analíticas audio
+│   ├── 04_🖼️_Visual_Analytics.py # Analíticas visual
+│   ├── 05_🎵_TinyListener.py    # Modelo TinyListener
+│   └── 06_🖼️_TinyRecognizer.py  # Modelo TinyRecognizer
 ├── 
 ├── 🏋️ training/                 # Módulos de entrenamiento
 │   ├── audio_module.py          # TinyListener Lightning
 │   ├── visual_module.py         # TinyRecognizer Lightning
-│   ├── speller_module.py        # TinySpeller Lightning
 │   ├── audio_dataset.py         # Datasets de audio
 │   ├── visual_dataset.py        # Datasets visuales
 │   └── config.py               # Configuración datasets
@@ -105,12 +102,6 @@ TinySpeak/
 - **Análisis Visual**: Embeddings, mapas de atención, confianza
 - **Entrenamiento Avanzado**: CORnet-Z backbone, augmentations automáticas
 - **Evaluación**: Métricas por clase, matriz de confusión
-
-### 🔗 **TinySpeller - Sistema Multimodal**
-- **Inferencia Combinada**: Audio + secuencias visuales de letras
-- **Entrenamiento Multimodal**: Dataloaders sincronizados, collate personalizado
-- **Arquitectura Híbrida**: LSTM bidireccional + atención cross-modal
-- **Evaluación Integral**: Word accuracy, top-k accuracy, ablation studies
 
 ### 🎤 **Audio Dataset Manager**
 - **Síntesis gTTS**: Múltiples idiomas y voces

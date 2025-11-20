@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 # Importar módulos del proyecto
-from models import TinySpeak, TinyListener, TinyRecognizer, TinySpeller
+from models import TinySpeak, TinyListener, TinyRecognizer
 from utils import (
     encontrar_device, load_wav2vec_model, get_default_words, synthesize_word,
     save_waveform_to_audio_file, WAV2VEC_SR, WAV2VEC_DIM
@@ -54,7 +54,7 @@ def setup_models(autoload: bool = False):
     llamar `setup_models(autoload=True)` para forzar la carga completa.
     """
     device = encontrar_device()
-    st.sidebar.info(f"Dispositivo detectado: {device}")
+    # st.sidebar.info(f"Dispositivo detectado: {device}")
 
     # Obtener palabras por defecto
     words = get_default_words()
@@ -79,13 +79,11 @@ def setup_models(autoload: bool = False):
         tiny_speak = TinySpeak(words=words, hidden_dim=64, num_layers=2, wav2vec_dim=WAV2VEC_DIM)
         tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model)
         tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
-        tiny_speller = TinySpeller(tiny_recognizer=tiny_recognizer, tiny_speak=tiny_speak)
 
         # Mover modelos al dispositivo
         tiny_speak = tiny_speak.to(device)
         tiny_listener = tiny_listener.to(device)
         tiny_recognizer = tiny_recognizer.to(device)
-        tiny_speller = tiny_speller.to(device)
 
     return {
         'device': device,
@@ -93,7 +91,6 @@ def setup_models(autoload: bool = False):
         'tiny_speak': tiny_speak,
         'tiny_listener': tiny_listener,
         'tiny_recognizer': tiny_recognizer,
-        'tiny_speller': tiny_speller,
         'words': words
     }
 
@@ -271,8 +268,7 @@ def create_model_metrics():
     """Crea las métricas simuladas de los modelos"""
     return {
         'TinyListener': {'params': '~2.1M', 'accuracy': '94.2%', 'delta': '2.1%'},
-        'TinyRecognizer': {'params': '~850K', 'accuracy': '97.8%', 'delta': '1.5%'}, 
-        'TinySpeller': {'latency': '12ms', 'accuracy': '98.9%', 'delta': '4.7%'}
+        'TinyRecognizer': {'params': '~850K', 'accuracy': '97.8%', 'delta': '1.5%'}
     }
 
 def load_dataset_config(config_path):
@@ -566,7 +562,7 @@ def display_system_metrics():
 
 def display_model_cards():
     """Muestra las tarjetas de información de los modelos"""
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     metrics = create_model_metrics()
     
     with col1:
@@ -600,22 +596,6 @@ def display_model_cards():
         
         st.metric("Parámetros", metrics['TinyRecognizer']['params'], "Eficiente")
         st.metric("Precisión", metrics['TinyRecognizer']['accuracy'], metrics['TinyRecognizer']['delta'])
-        
-    with col3:
-        st.markdown("""
-        <div class="model-card">
-        <h4>🔗 TinySpeller</h4>
-        <p><strong>Multimodal → Consenso</strong></p>
-        <ul>
-        <li>🔄 Fusión modalidades</li>
-        <li>📊 Confianza agregada</li>
-        <li>🎯 Mayor robustez</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.metric("Precisión", metrics['TinySpeller']['accuracy'], metrics['TinySpeller']['delta'])
-        st.metric("Latencia", metrics['TinySpeller']['latency'], "Ultra rápido")
 
 
 
@@ -1004,8 +984,8 @@ def display_performance_charts():
         st.markdown("#### ⚡ Latencia por Modelo")
         
         # Datos simulados de latencia
-        models_data = ['TinyListener', 'TinyRecognizer', 'TinySpeller']
-        latencies = [45, 12, 8]  # milisegundos
+        models_data = ['TinyListener', 'TinyRecognizer']
+        latencies = [45, 12]  # milisegundos
         
         df_latency = pd.DataFrame({
             'Modelo': models_data,
@@ -1027,8 +1007,8 @@ def display_performance_charts():
         st.markdown("#### 🎯 Precisión por Modalidad")
         
         # Datos simulados de precisión
-        modalities = ['Audio', 'Visión', 'Multimodal']
-        accuracies = [94.2, 97.8, 98.9]
+        modalities = ['Audio', 'Visión']
+        accuracies = [94.2, 97.8]
         
         df_accuracy = pd.DataFrame({
             'Modalidad': modalities,

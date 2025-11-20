@@ -178,157 +178,65 @@ class TinyListener(Module):
         packed = pack_padded_sequence(
             hidden_activations, lengths.cpu(), batch_first=True, enforce_sorted=False
         )
-        return self.tiny_speak(packed)
+        logits, hidden_states = self.tiny_speak(packed)
+        return logits, hidden_states  # ✅ MANTENER: Retornar ambos para compatibilidad
 
 class TinyRecognizer(Module):
-    def __init__(self, wav2vec_dim=768, num_classes=26, pretrained_backbone=True):
+    def __init__(self, wav2vec_dim=768, num_classes=26, pretrained_backbone=True, use_embeddings=False):
         super().__init__()
         # ✅ MEJORA CRÍTICA: Usar backbone preentrenado (o inicialización He mejorada)
         self.cornet = CORnet_Z(pretrained=pretrained_backbone)
-        # ✅ SIMPLIFICACIÓN: Decoder directo sin capas intermedias innecesarias
-        self.cornet.decoder = Sequential(OrderedDict([
-            ('avgpool', AdaptiveAvgPool2d((1, 1))),
-            ('flatten', Flatten()),
-            ('output', Linear(512, num_classes))  # Directo 512→26 clases
-        ]))
+        self.use_embeddings = use_embeddings
+        
+        if use_embeddings:
+            # ✅ MODO EMBEDDINGS: Para TinySpeller - mantiene arquitectura original
+            self.cornet.decoder = Sequential(OrderedDict([
+                ('avgpool', AdaptiveAvgPool2d((1, 1))),
+                ('flatten', Flatten()),
+                ('linear_input', Linear(512, 1024)),
+                ('relu', ReLU()),
+                ('linear_output', Linear(1024, wav2vec_dim)),
+            ]))
+            self.classifier = Linear(wav2vec_dim, num_classes)
+        else:
+            # ✅ MODO DIRECTO: Para entrenamiento standalone - arquitectura simplificada
+            self.cornet.decoder = Sequential(OrderedDict([
+                ('avgpool', AdaptiveAvgPool2d((1, 1))),
+                ('flatten', Flatten()),
+                ('output', Linear(512, num_classes))  # Directo 512→26 clases
+            ]))
+            self.classifier = None
+        
         if num_classes <= 0:
             raise ValueError("TinyRecognizer necesita al menos una clase de salida.")
-        # ✅ SIMPLIFICACIÓN: Sin clasificador separado, todo en el decoder
 
     def update_num_classes(self, num_classes: int) -> None:
         if num_classes <= 0:
             raise ValueError("TinyRecognizer necesita al menos una clase.")
         device = next(self.parameters()).device
-        # ✅ SIMPLIFICACIÓN: Actualizar el último layer del decoder
-        self.cornet.decoder.output = Linear(512, num_classes).to(device)
+        
+        if self.use_embeddings:
+            # Actualizar el clasificador separado
+            in_features = self.classifier.in_features
+            self.classifier = Linear(in_features, num_classes).to(device)
+        else:
+            # Actualizar el último layer del decoder
+            self.cornet.decoder.output = Linear(512, num_classes).to(device)
 
     def forward(self, x):
-        # ✅ SIMPLIFICACIÓN: Forward directo - CORnet ya incluye el clasificador
-        logits = self.cornet(x)
-        return logits, logits  # Retornar logits duplicados para compatibilidad
-
-class TinySpeller(Module):
-    def __init__(self, tiny_recognizer: TinyRecognizer, tiny_speak: TinySpeak):
-        super().__init__()
-        self.tiny_recognizer = tiny_recognizer
-        self.tiny_speak = tiny_speak
-
-        self.tiny_recognizer.eval()
-        for param in self.tiny_recognizer.parameters():
-            param.requires_grad = False
-
-    def forward(self, x):
-        """
-        x: Tensor (batch_size, seq_len, C, H, W)
-        """
-        batch_size, seq_len, C, H, W = x.size()
-        predicted_embeddings = []
-
-        # Embed each letter image in the sequence
-        for t in range(seq_len):
-            x_t = x[:, t, :, :, :]
-            _, predicted_embedding = self.tiny_recognizer(x_t)
-            predicted_embeddings.append(predicted_embedding.unsqueeze(1))
-
-        embs = torch.cat(predicted_embeddings, dim=1)  # (batch, seq_len, dim_embeddings)
-        lengths = [seq_len] * batch_size
-        packed = pack_padded_sequence(
-            embs, lengths, batch_first=True, enforce_sorted=False
-        )
-        return self.tiny_speak(packed)
+        if self.use_embeddings:
+            # ✅ MODO EMBEDDINGS: Retorna embeddings + logits (para TinySpeller)
+            embeddings = self.cornet(x)
+            logits = self.classifier(embeddings)
+            return logits, embeddings
+        else:
+            # ✅ MODO DIRECTO: Solo logits (para entrenamiento standalone)
+            logits = self.cornet(x)
+            return logits, logits  # Retornar logits duplicados para compatibilidad
 
 
-class TinySpellerImproved(Module):
-    """
-    Versión mejorada de TinySpeller con backbone entrenable y procesamiento eficiente.
-    
-    Mejoras:
-    - TinyRecognizer entrenable (sin .eval() forzado)
-    - Procesamiento batch-wise de secuencias
-    - Encoder BiLSTM con attention
-    - Regularización con dropout
-    """
-    def __init__(self, num_classes: int, vocab_size: int, 
-                 embed_dim: int = 768, hidden_dim: int = 256,
-                 dropout: float = 0.3, freeze_recognizer: bool = False):
-        super().__init__()
-        
-        self.embed_dim = embed_dim
-        self.hidden_dim = hidden_dim
-        self.vocab_size = vocab_size
-        
-        # Backbone visual - ENTRENABLE por defecto
-        self.visual_encoder = TinyRecognizer(num_classes=num_classes, wav2vec_dim=embed_dim)
-        
-        if freeze_recognizer:
-            # Solo congelar si se especifica explícitamente
-            for param in self.visual_encoder.parameters():
-                param.requires_grad = False
-        
-        # Encoder de secuencias bidireccional
-        self.sequence_encoder = LSTM(
-            input_size=embed_dim,
-            hidden_size=hidden_dim,
-            num_layers=2,
-            bidirectional=True,
-            dropout=dropout if hidden_dim > 1 else 0,
-            batch_first=True
-        )
-        
-        # Clasificador final con regularización
-        classifier_input_dim = hidden_dim * 2  # bidirectional
-        self.classifier = Sequential(
-            torch.nn.Dropout(dropout),
-            Linear(classifier_input_dim, hidden_dim),
-            ReLU(),
-            torch.nn.Dropout(dropout * 0.5),
-            Linear(hidden_dim, vocab_size)
-        )
-        
-    def forward(self, x):
-        """
-        x: Tensor (batch_size, seq_len, C, H, W)
-        
-        Returns:
-            logits: Tensor (batch_size, vocab_size)
-            embeddings: Tensor (batch_size, seq_len, embed_dim)
-        """
-        batch_size, seq_len, C, H, W = x.shape
-        
-        # Procesar todas las imágenes en batch (MÁS EFICIENTE)
-        x_flat = x.view(-1, C, H, W)  # [batch*seq, C, H, W]
-        _, embeddings_flat = self.visual_encoder(x_flat)  # [batch*seq, embed_dim]
-        
-        # Reshape back to sequences
-        embeddings = embeddings_flat.view(batch_size, seq_len, -1)  # [batch, seq, embed_dim]
-        
-        # Encode sequences con BiLSTM
-        lstm_out, _ = self.sequence_encoder(embeddings)  # [batch, seq, hidden*2]
-        
-        # Global pooling sobre la secuencia (mean pooling)
-        # Alternativas: max pooling, attention, último hidden state
-        pooled = lstm_out.mean(dim=1)  # [batch, hidden*2]
-        
-        # Clasificación final
-        logits = self.classifier(pooled)  # [batch, vocab_size]
-        
-        return logits, embeddings
-    
-    def update_vocab_size(self, new_vocab_size: int):
-        """Actualiza dinámicamente el tamaño del vocabulario"""
-        if new_vocab_size <= 0:
-            raise ValueError("TinySpellerImproved necesita al menos una palabra en el vocabulario.")
-        
-        device = next(self.parameters()).device
-        classifier_input_dim = self.hidden_dim * 2
-        
-        # Recrear clasificador con nuevo tamaño
-        self.classifier = Sequential(
-            torch.nn.Dropout(0.3),
-            Linear(classifier_input_dim, self.hidden_dim),
-            ReLU(),
-            torch.nn.Dropout(0.15),
-            Linear(self.hidden_dim, new_vocab_size)
-        ).to(device)
-        
-        self.vocab_size = new_vocab_size
+
+
+
+
+
