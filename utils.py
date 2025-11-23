@@ -337,6 +337,134 @@ def get_default_words():
         'rojo', 'señor', 'sol', 'tiempo', 'tierra', 'trabajar', 'verde', 'vida', 'viento'
     ]
 
+def list_checkpoints(model_type: str) -> list[dict]:
+    """
+    Lista los checkpoints disponibles para un tipo de modelo.
+    model_type: 'listener' o 'recognizer'
+    """
+    import json
+    from datetime import datetime
+    
+    models_dir = Path.cwd() / "models" / model_type
+    if not models_dir.exists():
+        return []
+        
+    checkpoints = []
+    for ckpt_path in models_dir.glob("*.ckpt"):
+        meta_path = ckpt_path.with_suffix(".ckpt.meta.json")
+        meta = {}
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except:
+                pass
+        
+        # Si no hay metadata, intentar inferir del nombre
+        if not meta:
+            meta = {
+                "timestamp": ckpt_path.stat().st_mtime,
+                "config": {}
+            }
+            
+        checkpoints.append({
+            "path": str(ckpt_path),
+            "filename": ckpt_path.name,
+            "timestamp": meta.get("timestamp", 0),
+            "meta": meta
+        })
+        
+    # Ordenar por fecha descendente
+    checkpoints.sort(key=lambda x: x["timestamp"], reverse=True)
+    return checkpoints
+
+def save_training_metrics(model_type: str, name: str, data: dict) -> str:
+    """Guarda las métricas de entrenamiento en un archivo JSON."""
+    import json
+    
+    metrics_dir = Path.cwd() / "metrics" / model_type
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Sanitizar nombre
+    safe_name = "".join([c for c in name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).rstrip()
+    filename = f"{safe_name}.json"
+    file_path = metrics_dir / filename
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        
+    return str(file_path)
+
+def load_training_metrics(model_type: str, filename: str) -> dict:
+    """Carga métricas de entrenamiento desde un archivo JSON."""
+    import json
+    
+    metrics_dir = Path.cwd() / "metrics" / model_type
+    file_path = metrics_dir / filename
+    
+    if not file_path.exists():
+        return {}
+        
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def list_metrics_files(model_type: str) -> list[dict]:
+    """Lista los archivos de métricas disponibles."""
+    import json
+    from datetime import datetime
+    
+    metrics_dir = Path.cwd() / "metrics" / model_type
+    if not metrics_dir.exists():
+        return []
+        
+    files = []
+    for json_path in metrics_dir.glob("*.json"):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                timestamp = data.get("timestamp", json_path.stat().st_mtime)
+                files.append({
+                    "filename": json_path.name,
+                    "path": str(json_path),
+                    "timestamp": timestamp,
+                    "config": data.get("config", {})
+                })
+        except:
+            continue
+            
+    files.sort(key=lambda x: x["timestamp"], reverse=True)
+    return files
+
+def delete_run_artifacts(model_type: str, metrics_filename: str) -> bool:
+    """Elimina el archivo de métricas y el checkpoint asociado si existe."""
+    metrics_dir = Path.cwd() / "metrics" / model_type
+    models_dir = Path.cwd() / "models" / model_type
+    
+    json_path = metrics_dir / metrics_filename
+    if not json_path.exists():
+        return False
+        
+    # Intentar borrar JSON
+    try:
+        json_path.unlink()
+    except:
+        return False
+        
+    # Intentar borrar checkpoint asociado (mismo nombre base)
+    ckpt_name = metrics_filename.replace(".json", ".ckpt")
+    ckpt_path = models_dir / ckpt_name
+    if ckpt_path.exists():
+        try:
+            ckpt_path.unlink()
+            # Borrar metadata si existe
+            meta_path = ckpt_path.with_suffix(".ckpt.meta.json")
+            if meta_path.exists():
+                meta_path.unlink()
+        except:
+            pass
+            
+    return True
+
 # Constantes globales
 WAV2VEC_SR = 16000
 WAV2VEC_DIM = 768

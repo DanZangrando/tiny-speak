@@ -121,7 +121,7 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
             abs_path = (self.repo_root / rel_path).resolve()
             if not abs_path.exists():
                 # Intentar también path relativo a dataset base para robustez.
-                fallback = self.repo_root / "visual_dataset" / rel_path
+                fallback = self.repo_root / "data" / "visual" / rel_path
                 abs_path = fallback.resolve()
             if not abs_path.exists():
                 continue

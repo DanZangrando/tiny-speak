@@ -118,6 +118,7 @@ dmypy.json
 *.flac
 *.m4a
 data/
+!data/diccionarios/
 test_audio.wav
 *.pth
 *.pt
@@ -144,3 +145,6 @@ Thumbs.db
 .streamlit/secrets.toml
 
 models/
+visual_dataset/
+lightning_logs/
+*.ckpt

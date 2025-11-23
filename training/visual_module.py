@@ -33,8 +33,19 @@ class TinyRecognizerLightning(pl.LightningModule):
         self._initialize_classifier_only()
         
         if freeze_backbone:
-            for param in self.model.cornet.parameters():
-                param.requires_grad = False
+            # ✅ CORRECCIÓN: Congelar solo backbone (V1-IT), dejar decoder entrenable
+            for name, child in self.model.cornet.named_children():
+                if name == 'decoder':
+                    for param in child.parameters():
+                        param.requires_grad = True
+                else:
+                    for param in child.parameters():
+                        param.requires_grad = False
+            
+            # Asegurar que el clasificador (si existe) sea entrenable
+            if self.model.classifier is not None:
+                for param in self.model.classifier.parameters():
+                    param.requires_grad = True
 
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -54,7 +65,9 @@ class TinyRecognizerLightning(pl.LightningModule):
                 torch.nn.init.constant_(self.model.classifier.bias, 0)
         else:
             # Modo directo: inicializar capa final del decoder
-            output_layer = self.model.cornet.decoder.output
+            # Acceder via _modules porque cornet es Sequential
+            decoder = self.model.cornet._modules['decoder']
+            output_layer = decoder._modules['output']
             if hasattr(output_layer, 'weight'):
                 torch.nn.init.xavier_normal_(output_layer.weight)
                 if output_layer.bias is not None:

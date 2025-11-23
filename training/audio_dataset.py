@@ -12,8 +12,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from pathlib import Path
 from training.config import load_master_dataset_config
-from utils import WAV2VEC_SR
+from utils import WAV2VEC_SR, load_waveform
 
 try:  # pragma: no cover - defensive import
     import torchaudio
@@ -131,12 +132,30 @@ def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int) -> Tupl
     samples_by_word: Dict[str, List[AudioSample]] = {word: [] for word in words}
     for word, entries in generated.items():
         for entry in entries:
-            audio_b64 = entry.get("audio_base64")
-            if not audio_b64:
-                continue
-            try:
-                waveform, sr = _decode_waveform(audio_b64, target_sr=target_sr)
-            except Exception:  # noqa: BLE001
+            waveform = None
+            sr = None
+            
+            # Intentar cargar desde archivo primero
+            if "file_path" in entry:
+                repo_root = Path(__file__).parent.parent
+                file_path = repo_root / entry["file_path"]
+                if file_path.exists():
+                    try:
+                        waveform = load_waveform(str(file_path), target_sr=target_sr)
+                        sr = target_sr
+                    except Exception:
+                        pass
+
+            # Fallback a base64 si no hay archivo o falló la carga
+            if waveform is None:
+                audio_b64 = entry.get("audio_base64")
+                if audio_b64:
+                    try:
+                        waveform, sr = _decode_waveform(audio_b64, target_sr=target_sr)
+                    except Exception:  # noqa: BLE001
+                        pass
+            
+            if waveform is None:
                 continue
             duration_ms = entry.get("duracion_ms")
             metadata = {k: v for k, v in entry.items() if k != "audio_base64"}

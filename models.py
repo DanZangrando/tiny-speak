@@ -190,7 +190,7 @@ class TinyRecognizer(Module):
         
         if use_embeddings:
             # ✅ MODO EMBEDDINGS: Para TinySpeller - mantiene arquitectura original
-            self.cornet.decoder = Sequential(OrderedDict([
+            new_decoder = Sequential(OrderedDict([
                 ('avgpool', AdaptiveAvgPool2d((1, 1))),
                 ('flatten', Flatten()),
                 ('linear_input', Linear(512, 1024)),
@@ -200,12 +200,15 @@ class TinyRecognizer(Module):
             self.classifier = Linear(wav2vec_dim, num_classes)
         else:
             # ✅ MODO DIRECTO: Para entrenamiento standalone - arquitectura simplificada
-            self.cornet.decoder = Sequential(OrderedDict([
+            new_decoder = Sequential(OrderedDict([
                 ('avgpool', AdaptiveAvgPool2d((1, 1))),
                 ('flatten', Flatten()),
                 ('output', Linear(512, num_classes))  # Directo 512→26 clases
             ]))
             self.classifier = None
+        
+        # ✅ CORRECCIÓN: Reemplazar correctamente el módulo en nn.Sequential
+        self.cornet._modules['decoder'] = new_decoder
         
         if num_classes <= 0:
             raise ValueError("TinyRecognizer necesita al menos una clase de salida.")
@@ -221,7 +224,8 @@ class TinyRecognizer(Module):
             self.classifier = Linear(in_features, num_classes).to(device)
         else:
             # Actualizar el último layer del decoder
-            self.cornet.decoder.output = Linear(512, num_classes).to(device)
+            # Acceder via _modules porque cornet es Sequential
+            self.cornet._modules['decoder']._modules['output'] = Linear(512, num_classes).to(device)
 
     def forward(self, x):
         if self.use_embeddings:
@@ -240,3 +244,67 @@ class TinyRecognizer(Module):
 
 
 
+class TinyReader(Module):
+    """
+    Modelo Generativo (Top-Down): Concepto (Logits) -> Imaginación Auditiva (Wav2Vec2 Embeddings).
+    """
+    def __init__(
+        self, 
+        num_classes: int, 
+        hidden_dim: int = 256, 
+        wav2vec_dim: int = 768, 
+        num_layers: int = 2
+    ):
+        super().__init__()
+        self.num_classes = num_classes
+        self.hidden_dim = hidden_dim
+        self.wav2vec_dim = wav2vec_dim
+        
+        # Encoder: Proyecta el concepto (logits) al espacio latente del LSTM
+        self.concept_encoder = nn.Sequential(
+            nn.Linear(num_classes, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        
+        # Decoder: Genera la secuencia temporal
+        self.lstm = nn.LSTM(
+            input_size=hidden_dim, # Entrada en cada paso (el concepto repetido)
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True
+        )
+        
+        # Proyección de salida: Latente -> Embedding Wav2Vec2
+        self.output_projection = nn.Linear(hidden_dim, wav2vec_dim)
+
+    def forward(self, logits, target_length=None):
+        """
+        logits: (B, num_classes) - El "concepto" o predicción de TinyListener
+        target_length: int - Longitud de la secuencia a generar. 
+                       Si es None, se debe especificar (por ahora fijo o pasado externamente).
+        """
+        B = logits.size(0)
+        
+        # 1. Codificar el concepto
+        # (B, num_classes) -> (B, hidden_dim)
+        concept_embedding = self.concept_encoder(logits)
+        
+        # 2. Preparar entrada para el LSTM
+        # Repetimos el concepto para cada paso de tiempo (como un "bias" constante de qué estamos imaginando)
+        # Si no se da length, asumimos un default (ej. 100 frames ~ 2 segundos) o el del batch
+        if target_length is None:
+            target_length = 100 
+            
+        # (B, 1, hidden_dim) -> (B, L, hidden_dim)
+        lstm_input = concept_embedding.unsqueeze(1).expand(-1, target_length, -1)
+        
+        # 3. Generar secuencia
+        # output: (B, L, hidden_dim)
+        lstm_out, _ = self.lstm(lstm_input)
+        
+        # 4. Proyectar a espacio Wav2Vec2
+        # (B, L, 768)
+        generated_embeddings = self.output_projection(lstm_out)
+        
+        return generated_embeddings
