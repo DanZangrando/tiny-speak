@@ -474,3 +474,19 @@ BATCH_SIZE = 32
 # Lista de letras
 import string
 LETTERS = list(string.ascii_lowercase)
+
+def save_model_metadata(ckpt_path, config, metrics):
+    """Guarda metadatos del modelo para su gestión."""
+    import time
+    from datetime import datetime
+    import json
+    
+    meta_path = Path(ckpt_path).with_suffix(".ckpt.meta.json")
+    data = {
+        "timestamp": time.time(),
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "config": config,
+        "metrics": metrics
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)

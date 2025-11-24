@@ -24,7 +24,8 @@ from models import TinyReader
 from training.reader_module import TinyReaderLightning
 from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
 from training.config import load_master_dataset_config
-from utils import list_checkpoints, encontrar_device
+from utils import list_checkpoints, encontrar_device, load_waveform, save_model_metadata
+from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report, plot_probability_matrix, plot_latent_space_pca
 
 # Configurar página
 st.set_page_config(
@@ -145,6 +146,9 @@ def main():
     # ==========================================
     # TAB 3: MODELOS GUARDADOS
     # ==========================================
+    # ==========================================
+    # TAB 3: MODELOS GUARDADOS
+    # ==========================================
     with tabs[2]:
         st.markdown("### 📚 Gestión de Modelos")
         reader_checkpoints = list_checkpoints("reader")
@@ -152,21 +156,158 @@ def main():
         if not reader_checkpoints:
             st.info("No hay modelos entrenados.")
         else:
-            for ckpt in reader_checkpoints:
-                with st.expander(f"🧠 {ckpt['filename']} - {datetime.fromtimestamp(ckpt['timestamp']).strftime('%Y-%m-%d %H:%M')}"):
-                    col_info, col_actions = st.columns([3, 1])
-                    with col_info:
-                        meta = ckpt.get('meta', {})
-                        st.json(meta.get('config', {}), expanded=False)
-                        metrics = meta.get('metrics', {})
-                        if metrics:
-                            st.markdown("**Métricas:**")
-                            st.write(metrics)
-                    with col_actions:
-                        if st.button("🗑️ Eliminar", key=f"del_{ckpt['filename']}"):
-                            Path(ckpt['path']).unlink(missing_ok=True)
-                            Path(ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                            st.rerun()
+            ckpt_opts = {f"{c['filename']} ({datetime.fromtimestamp(c['timestamp']).strftime('%Y-%m-%d %H:%M')})": c for c in reader_checkpoints}
+            sel_ckpt_key = st.selectbox("Seleccionar Modelo para Detalles", list(ckpt_opts.keys()))
+            sel_ckpt = ckpt_opts[sel_ckpt_key]
+            
+            col_info, col_actions = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**Archivo:** `{sel_ckpt['filename']}`")
+                meta = sel_ckpt.get('meta', {})
+                
+                # Configuración
+                with st.expander("⚙️ Configuración de Entrenamiento", expanded=True):
+                    st.json(meta.get('config', {}))
+                
+                # Métricas
+                metrics = meta.get('metrics', {})
+                if metrics:
+                    st.markdown("#### 📊 Métricas Finales")
+                    m_col1, m_col2 = st.columns(2)
+                    m_col1.metric("Val Loss", f"{metrics.get('val_loss', 0):.4f}")
+                    m_col2.metric("Train Loss", f"{metrics.get('train_loss', 0):.4f}")
+                    
+            with col_actions:
+                st.markdown("### Acciones")
+                if st.button("🗑️ Eliminar Modelo", key=f"del_{sel_ckpt['filename']}", type="primary"):
+                    Path(sel_ckpt['path']).unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
+                    st.rerun()
+            
+            st.divider()
+            
+            # --- SECCIÓN DE ANALÍTICA AVANZADA ---
+            st.markdown("### 📈 Analítica del Modelo")
+            
+            # 1. Curvas de Aprendizaje
+            hist_path = Path(sel_ckpt['path']).with_suffix(".csv")
+            if hist_path.exists():
+                history_df = pd.read_csv(hist_path)
+                plot_learning_curves(history_df)
+            else:
+                st.info("⚠️ No hay historial de entrenamiento detallado disponible.")
+
+            # 2. Evaluación Perceptual
+            st.markdown("### 🧠 Evaluación Perceptual (Oído Interno)")
+            st.markdown("Genera 'imaginaciones' para cada concepto y verifica si el Listener las entiende correctamente.")
+            
+            if st.button("🚀 Ejecutar Evaluación Perceptual", key=f"eval_{sel_ckpt['filename']}"):
+                with st.spinner("Cargando modelos y generando imaginaciones..."):
+                    try:
+                        # Cargar Vocab
+                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
+                        words = []
+                        if meta_path.exists():
+                            with open(meta_path) as f:
+                                words = json.load(f).get("config", {}).get("vocab", [])
+                        if not words:
+                            config = load_master_dataset_config()
+                            words = config.get("diccionario_seleccionado", {}).get("palabras", [])
+                            
+                        # Cargar Modelo (Reader + Listener interno)
+                        # Necesitamos el path del listener original. Si no está en meta, intentamos inferirlo o pedirlo.
+                        # Por simplicidad, intentamos cargar con el listener que tenga guardado en hparams, 
+                        # pero load_from_checkpoint requiere listener_checkpoint_path si no está en el checkpoint (que debería estar).
+                        # Vamos a asumir que el usuario tiene el listener disponible.
+                        
+                        # Hack: Leer listener_checkpoint_path de hparams del checkpoint si es posible, 
+                        # o usar uno por defecto si falla.
+                        # Mejor: Pedir al usuario que seleccione un Listener si falla.
+                        # Intentemos cargar directo.
+                        
+                        device = encontrar_device()
+                        
+                        # Buscar un listener válido si es necesario
+                        listener_ckpts = list_checkpoints("listener")
+                        if not listener_ckpts:
+                            st.error("Necesitas un modelo TinyListener entrenado para evaluar.")
+                        else:
+                            listener_path = listener_ckpts[0]['path'] # Usar el más reciente por defecto si no se sabe cual
+                            
+                            # Intentar cargar
+                            model = TinyReaderLightning.load_from_checkpoint(
+                                sel_ckpt['path'],
+                                class_names=words,
+                                listener_checkpoint_path=listener_path, # Fallback path
+                                map_location=device
+                            )
+                            model.eval()
+                            model.to(device)
+                            
+                            # Inferencia Loop
+                            all_preds = []
+                            all_probs = []
+                            all_labels = []
+                            all_embeddings = []
+                            
+                            progress_bar = st.progress(0)
+                            
+                            # Generar N ejemplos por clase
+                            samples_per_class = 5
+                            total_steps = len(words) * samples_per_class
+                            step = 0
+                            
+                            with torch.no_grad():
+                                for i, word in enumerate(words):
+                                    # Label real
+                                    label_idx = i
+                                    
+                                    # Input Concepto (Batch de samples_per_class)
+                                    concept_logits = torch.zeros(samples_per_class, len(words), device=device)
+                                    concept_logits[:, label_idx] = 1.0
+                                    
+                                    # Generar
+                                    generated_embeddings = model.reader(concept_logits, target_length=100)
+                                    
+                                    # Guardar embeddings para PCA (promedio temporal para tener 1 vector por sample)
+                                    # (B, L, D) -> (B, D)
+                                    avg_embeddings = generated_embeddings.mean(dim=1)
+                                    all_embeddings.extend(avg_embeddings.cpu().numpy())
+                                    
+                                    # Escuchar (Listener)
+                                    lengths = torch.full((samples_per_class,), 100, device=device)
+                                    packed_gen = torch.nn.utils.rnn.pack_padded_sequence(
+                                        generated_embeddings, lengths.cpu(), batch_first=True, enforce_sorted=False
+                                    )
+                                    
+                                    listener_logits, _ = model.listener.tiny_speak(packed_gen)
+                                    probs = torch.softmax(listener_logits, dim=1)
+                                    preds = torch.argmax(probs, dim=1)
+                                    
+                                    all_preds.extend(preds.cpu().numpy())
+                                    all_probs.extend(probs.cpu().numpy())
+                                    all_labels.extend([label_idx] * samples_per_class)
+                                    
+                                    step += samples_per_class
+                                    progress_bar.progress(min(step / total_steps, 1.0))
+                                    
+                            st.success("Evaluación perceptual completada.")
+                            
+                            # Visualizar
+                            st.markdown("#### Mapa de Calor de Probabilidades (Perceptual)")
+                            st.caption("Eje Y: Concepto Imaginado | Eje X: Probabilidad asignada por el Listener")
+                            plot_probability_matrix(all_labels, all_probs, words, title="Mapa de Calor Perceptual")
+                            
+                            st.markdown("#### Espacio Latente Imaginado (PCA 3D)")
+                            st.caption("Visualización de cómo se agrupan las 'imaginaciones' en el espacio vectorial.")
+                            plot_latent_space_pca(all_embeddings, all_labels, words)
+                            
+                            display_classification_report(all_labels, all_preds, words)
+                            
+                    except Exception as e:
+                        st.error(f"Error durante la evaluación: {e}")
+                        st.exception(e)
 
     # ==========================================
     # TAB 4: LABORATORIO
@@ -219,13 +360,18 @@ def run_training(ckpt_path, epochs, lr, batch_size, w_mse, w_cos, w_perceptual):
     final_path = save_dir / f"reader_{timestamp}.ckpt"
     trainer.save_checkpoint(final_path)
     
-    train_config = {
+    meta_config = {
         "epochs": epochs, "lr": lr, "batch_size": batch_size,
         "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
         "listener_ckpt": str(ckpt_path)
     }
     final_metrics = history_cb.history[-1] if history_cb.history else {}
-    save_model_metadata(final_path, train_config, final_metrics)
+    save_model_metadata(final_path, meta_config, final_metrics)
+    
+    # Guardar historial completo
+    if history_cb.history:
+        hist_path = final_path.with_suffix(".csv")
+        pd.DataFrame(history_cb.history).to_csv(hist_path, index=False)
     
     st.info(f"Modelo guardado en {final_path}")
     
@@ -263,21 +409,32 @@ def run_laboratory():
     cols = st.columns(len(target_word))
     
     for i, char in enumerate(target_word):
-        char_dir = visual_dir / char.upper() # Asumiendo mayúsculas en carpetas
-        # Si no existe, probar minúscula
-        if not char_dir.exists():
-            char_dir = visual_dir / char.lower()
-            
-        if char_dir.exists():
-            # Tomar la primera imagen disponible
-            imgs = list(char_dir.glob("*.png"))
-            if imgs:
-                img = Image.open(imgs[0])
-                cols[i].image(img, caption=char, width=64)
-            else:
-                cols[i].warning(f"No img for {char}")
+        # Intentar encontrar el directorio de la letra
+        char_lower = char.lower()
+        char_upper = char.upper()
+        
+        # Posibles rutas
+        candidates = [
+            visual_dir / char_lower,
+            visual_dir / char_upper,
+            visual_dir / f"tiny_emnist_26/{char_lower}", # Estructura anidada común
+            visual_dir / f"tiny_emnist_26/{char_upper}"
+        ]
+        
+        found_img = None
+        for char_dir in candidates:
+            if char_dir.exists():
+                # Buscar imágenes recursivamente
+                imgs = list(char_dir.glob("**/*.png")) + list(char_dir.glob("**/*.jpg"))
+                if imgs:
+                    found_img = imgs[0] # Tomar la primera
+                    break
+        
+        if found_img:
+            img = Image.open(found_img)
+            cols[i].image(img, caption=char, width=64)
         else:
-            cols[i].warning(f"No dir for {char}")
+            cols[i].warning(f"No img for {char}")
 
     if st.button("🧠 Imaginar y Escuchar", type="primary"):
         evaluate_imagination(r_opts[sel_reader], l_opts[sel_listener], target_word, words)

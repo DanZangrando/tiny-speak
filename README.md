@@ -1,122 +1,107 @@
-# 🎤 TinySpeak - Sistema Multimodal de IA
+# 🧠 TinySpeak: Sistema Cognitivo Multimodal
 
-**TinySpeak** es un sistema completo de inteligencia artificial que combina reconocimiento de voz, visión computacional y síntesis de audio en una aplicación web moderna construida con Streamlit.
+**TinySpeak** es una plataforma de investigación y educación en Inteligencia Artificial que simula los procesos cognitivos humanos de **audición**, **visión** e **imaginación**. Construido con PyTorch Lightning y Streamlit, ofrece una interfaz interactiva para entrenar, evaluar y experimentar con modelos de Deep Learning de vanguardia.
 
 ## ✨ Características Principales
 
-### 🧠 **Modelos de IA Integrados**
-- **🎵 TinyListener**: Reconocimiento de palabras usando Wav2Vec2 + LSTM
-- **👁️ TinyRecognizer**: Reconocimiento de letras manuscritas con CORnet-Z 
+### 🤖 Arquitectura Cognitiva Modular
+El sistema se divide en tres "sentidos" o agentes especializados:
 
-### 📚 **Gestión Inteligente de Vocabularios**
-- **Diccionarios Predefinidos**: Kalulu (español), Phones (fonemas), temáticos
-- **Diccionarios Personalizados**: Creación de vocabularios específicos
-- **Sincronización Automática**: Configuración centralizada y consistente
+1.  **👂 TinyListener (El Oído)**
+    *   **Modelo**: Wav2Vec 2.0 + LSTM.
+    *   **Función**: Reconocimiento Automático del Habla (ASR).
+    *   **Capacidad**: Entiende palabras habladas y las mapea a conceptos.
+    *   **Innovación**: Utiliza embeddings de audio pre-entrenados para aprender con pocos datos.
 
-### � **Generación Avanzada de Audio**
-- **Síntesis gTTS**: Google Text-to-Speech de alta calidad
-- **Variaciones Automáticas**: 6 tipos (velocidad, tono, volumen, normalizado)
-- **Conversión WAV**: Procesamiento automático para compatibilidad
-- **Verificación Inteligente**: Validación automática de cada muestra
+2.  **👁️ TinyRecognizer (La Vista)**
+    *   **Modelo**: CORnet-Z (Inspired by V1-IT cortex).
+    *   **Función**: Reconocimiento Óptico de Caracteres (OCR).
+    *   **Capacidad**: Lee letras manuscritas y tipografías variadas.
+    *   **Innovación**: Simula la vía ventral del procesamiento visual humano.
 
-### 🖼️ **Generación de Datasets Visuales**
-- **Letras Sintéticas**: Múltiples fuentes y estilos tipográficos
-- **Variaciones Personalizables**: Tamaños, efectos y transformaciones
-- **Dataset Visual Completo**: Para entrenamiento de reconocimiento OCR
+3.  **🧠 TinyReader (La Voz Interior)**
+    *   **Modelo**: Generativo Top-Down (Encoder-Decoder).
+    *   **Función**: Imaginación Auditiva.
+    *   **Capacidad**: "Lee" un concepto visual y genera una alucinación auditiva (embedding) de cómo debería sonar.
+    *   **Innovación**: Entrenamiento con **Pérdida Perceptual**, usando al *TinyListener* como juez para validar sus imaginaciones.
 
-### ⚡ **Entrenamiento con PyTorch Lightning**
-- **TinyListener Training**: Entrenamiento completo de reconocimiento de audio
-- **TinyRecognizer Training**: Entrenamiento de reconocimiento visual
-- **Callbacks Avanzados**: Early stopping, checkpoints y métricas en tiempo real
+### 📊 Analítica Avanzada e Interactiva
+Cada modelo cuenta con un panel de control profesional:
+*   **Curvas de Aprendizaje**: Gráficos interactivos de pérdida y precisión en tiempo real (Plotly).
+*   **Matrices de Confusión**: Mapas de calor para visualizar errores de clasificación.
+*   **Mapas de Probabilidad**: Visualización de confianza del modelo para grandes vocabularios.
+*   **Espacio Latente 3D**: Proyección PCA interactiva para explorar cómo la IA organiza los conceptos en su "cerebro".
 
-## � Instalación Rápida
+### 🧪 Laboratorio de Experimentación
+Un entorno sandbox para probar los modelos:
+*   **Grabación en vivo**: Prueba el Listener con tu propio micrófono.
+*   **Lienzo de dibujo**: Dibuja letras para probar el Recognizer.
+*   **Simulación de Imaginación**: Escribe una palabra y observa cómo el Reader la "sueña" y el Listener la interpreta.
 
-### **Prerrequisitos**
-- Python 3.8+ 
-- Entorno virtual recomendado
-- Conexión a internet (para gTTS)
-
-### **Configuración**
-```bash
-# 1. Clonar el proyecto
-git clone [repository-url]
-cd tiny_speak
-
-# 2. Activar entorno virtual
-source .venv/bin/activate  # Linux/macOS
-# o .venv\Scripts\activate   # Windows
-
-# 3. Instalar dependencias
-pip install -r requirements.txt
-
-# 4. Ejecutar aplicación
-streamlit run app.py
-```
-
-La aplicación se abrirá automáticamente en `http://localhost:8501`
-
-## 🏗️ Arquitectura del Sistema
+## 🏗️ Estructura del Proyecto
 
 ```
 TinySpeak/
-├── 🎯 app.py                    # Aplicación principal Streamlit
-├── 🧠 models.py                 # Definiciones de modelos IA
-├── 🔧 utils.py                  # Utilidades y helpers
-├── 📋 requirements.txt          # Dependencias Python
-├── 📊 master_dataset_config.json # Configuración centralizada
+├── 🎯 app.py                    # Punto de entrada de la aplicación
+├── 🧠 models.py                 # Arquitecturas de redes neuronales (PyTorch)
+├── 🔧 utils.py                  # Utilidades compartidas (audio, visualización)
 ├── 
+├── 📄 pages/                    # Interfaz de Usuario (Streamlit)
+│   ├── 01_👂_Audio_Dataset.py   # Gestión de datos de audio
+│   ├── 02_👁️_Visual_Dataset.py  # Gestión de datos visuales
+│   ├── 03_👂_Audio_Analytics.py # Exploración de datos
+│   ├── 05_👂_TinyListener.py    # Entrenamiento y Lab: Listener
+│   ├── 06_👁️_TinyRecognizer.py  # Entrenamiento y Lab: Recognizer
+│   └── 07_👁️👂_TinyReader.py    # Entrenamiento y Lab: Reader
+│   └── README.md                # Documentación detallada de páginas
+│
 ├── 📁 components/               # Componentes UI reutilizables
-│   └── modern_sidebar.py        # Sidebar con glassmorphism
-├── 
-├── 📄 pages/                    # Páginas de la aplicación
-│   ├── 01_🎵_Audio_Dataset.py   # Gestión dataset audio
-│   ├── 02_🖼️_Visual_Dataset.py  # Gestión dataset visual
-│   ├── 03_🎵_Audio_Analytics.py # Analíticas audio
-│   ├── 04_🖼️_Visual_Analytics.py # Analíticas visual
-│   ├── 05_🎵_TinyListener.py    # Modelo TinyListener
-│   └── 06_🖼️_TinyRecognizer.py  # Modelo TinyRecognizer
-├── 
-├── 🏋️ training/                 # Módulos de entrenamiento
-│   ├── audio_module.py          # TinyListener Lightning
-│   ├── visual_module.py         # TinyRecognizer Lightning
-│   ├── audio_dataset.py         # Datasets de audio
-│   ├── visual_dataset.py        # Datasets visuales
-│   └── config.py               # Configuración datasets
-├── 
-├── 📁 data/                     # Datasets descargados
-├── 📁 checkpoints/              # Modelos entrenados
-├── 📁 visual_dataset/           # Imágenes generadas
-└── 📁 .streamlit/               # Configuración UI
+│   ├── analytics.py             # Motores de visualización y métricas
+│   ├── diagrams.py              # Generadores de diagramas de arquitectura
+│   └── README.md                # Documentación de componentes
+│
+├── 🏋️ training/                 # Lógica de Entrenamiento (Lightning)
+│   ├── audio_module.py          # LightningModule: Listener
+│   ├── visual_module.py         # LightningModule: Recognizer
+│   ├── reader_module.py         # LightningModule: Reader
+│   └── README.md                # Documentación de entrenamiento
+│
+├── 📁 models/                   # Checkpoints y metadatos guardados
+├── 📁 data/                     # Datasets crudos y procesados
+└── 📁 metrics/                  # Logs de entrenamiento (JSON)
 ```
 
-## 💡 Funcionalidades Detalladas
+## 🚀 Instalación y Uso
 
-### 🎵 **TinyListener - Reconocimiento de Audio**
-- **Entrada Múltiple**: WAV, MP3, FLAC, M4A, grabación en vivo
-- **Análisis Completo**: Waveform, espectrograma, predicciones
-- **Métricas Avanzadas**: Confianza, logits, embeddings internos
-- **Entrenamiento**: PyTorch Lightning con callbacks personalizados
+1.  **Clonar el repositorio**:
+    ```bash
+    git clone https://github.com/tu-usuario/tiny-speak.git
+    cd tiny_speak
+    ```
 
-### 👁️ **TinyRecognizer - Reconocimiento Visual**  
-- **Carga Flexible**: Imágenes manuscritas, sintéticas, fotografías
-- **Análisis Visual**: Embeddings, mapas de atención, confianza
-- **Entrenamiento Avanzado**: CORnet-Z backbone, augmentations automáticas
-- **Evaluación**: Métricas por clase, matriz de confusión
+2.  **Crear entorno virtual** (Recomendado):
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # Linux/Mac
+    # .venv\Scripts\activate   # Windows
+    ```
 
-### 🎤 **Audio Dataset Manager**
-- **Síntesis gTTS**: Múltiples idiomas y voces
-- **Variaciones Automáticas**: Speed (0.8x-1.2x), pitch, volumen
-- **Postprocesamiento**: Normalización, padding, conversión de formatos
-- **Validación**: Reproducción automática y verificación de calidad
+3.  **Instalar dependencias**:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-### �️ **Visual Dataset Manager**
-- **Generación Tipográfica**: 15+ fuentes, múltiples tamaños
-- **Augmentations**: Rotación, ruido, blur, transformaciones afines
-- **Balanceo Automático**: Distribución equitativa por clase
-- **Exportación**: PNG optimizado, metadatos JSON
+4.  **Ejecutar la aplicación**:
+    ```bash
+    streamlit run app.py
+    ```
 
-### 📊 **Dashboard Analytics**
-- **Métricas en Tiempo Real**: Estado de datasets, progreso de entrenamiento
-- **Visualizaciones**: Plotly interactivo, métricas dinámicas
-- **Consistencia**: Verificación automática de sincronización
-- **Performance**: Métricas de modelos, comparaciones A/B
+## 🔬 Fundamentos Científicos
+Este proyecto explora conceptos avanzados de IA:
+*   **Self-Supervised Learning**: Uso de Wav2Vec 2.0.
+*   **Transfer Learning**: Adaptación de modelos pre-entrenados a tareas específicas.
+*   **Multimodal Learning**: Integración de visión y audio en un espacio latente común.
+*   **Generative AI**: Creación de representaciones sintéticas a partir de conceptos abstractos.
+
+---
+*Desarrollado con ❤️ para la investigación en IA Cognitiva.*

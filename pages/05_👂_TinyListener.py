@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from components.modern_sidebar import display_modern_sidebar
 from components.diagrams import get_listener_diagram
 from components.code_viewer import get_function_source
+from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report, plot_probability_matrix
 from models import TinyListener, TinySpeak
 from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
 from training.audio_module import TinyListenerLightning
@@ -26,7 +27,8 @@ from utils import (
     encontrar_device,
     get_default_words,
     load_waveform,
-    list_checkpoints
+    list_checkpoints,
+    save_model_metadata
 )
 
 # Configurar página
@@ -58,17 +60,6 @@ def get_custom_css():
     }
     </style>
     """
-
-def save_model_metadata(ckpt_path, config, metrics):
-    meta_path = Path(ckpt_path).with_suffix(".ckpt.meta.json")
-    data = {
-        "timestamp": time.time(),
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "config": config,
-        "metrics": metrics
-    }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
 
 class ListenerHistoryCallback(pl.Callback):
     def __init__(self):
@@ -137,6 +128,9 @@ def main():
     # ==========================================
     # TAB 3: MODELOS GUARDADOS
     # ==========================================
+    # ==========================================
+    # TAB 3: MODELOS GUARDADOS
+    # ==========================================
     with tabs[2]:
         st.markdown("### 📚 Gestión de Modelos")
         checkpoints = list_checkpoints("listener")
@@ -144,20 +138,114 @@ def main():
         if not checkpoints:
             st.info("No hay modelos entrenados.")
         else:
-            for ckpt in checkpoints:
-                with st.expander(f"🎵 {ckpt['filename']} - {datetime.fromtimestamp(ckpt['timestamp']).strftime('%Y-%m-%d %H:%M')}"):
-                    col_info, col_actions = st.columns([3, 1])
-                    with col_info:
-                        meta = ckpt.get('meta', {})
-                        st.json(meta.get('config', {}), expanded=False)
-                        metrics = meta.get('metrics', {})
-                        if metrics:
-                            st.metric("Val Accuracy", f"{metrics.get('val_top1', 0):.2%}")
-                    with col_actions:
-                        if st.button("🗑️ Eliminar", key=f"del_{ckpt['filename']}"):
-                            Path(ckpt['path']).unlink(missing_ok=True)
-                            Path(ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                            st.rerun()
+            ckpt_opts = {f"{c['filename']} ({datetime.fromtimestamp(c['timestamp']).strftime('%Y-%m-%d %H:%M')})": c for c in checkpoints}
+            sel_ckpt_key = st.selectbox("Seleccionar Modelo para Detalles", list(ckpt_opts.keys()))
+            sel_ckpt = ckpt_opts[sel_ckpt_key]
+            
+            col_info, col_actions = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**Archivo:** `{sel_ckpt['filename']}`")
+                meta = sel_ckpt.get('meta', {})
+                
+                # Configuración
+                with st.expander("⚙️ Configuración de Entrenamiento", expanded=True):
+                    st.json(meta.get('config', {}))
+                
+                # Métricas
+                metrics = meta.get('metrics', {})
+                if metrics:
+                    st.markdown("#### 📊 Métricas Finales")
+                    m_col1, m_col2, m_col3 = st.columns(3)
+                    m_col1.metric("Val Accuracy", f"{metrics.get('val_top1', 0):.2f}%")
+                    m_col2.metric("Val Loss", f"{metrics.get('val_loss', 0):.4f}")
+                    m_col3.metric("Train Loss", f"{metrics.get('train_loss', 0):.4f}")
+                    
+            with col_actions:
+                st.markdown("### Acciones")
+                if st.button("🗑️ Eliminar Modelo", key=f"del_{sel_ckpt['filename']}", type="primary"):
+                    Path(sel_ckpt['path']).unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
+                    st.rerun()
+            
+            st.divider()
+            
+            # --- SECCIÓN DE ANALÍTICA AVANZADA ---
+            st.markdown("### 📈 Analítica del Modelo")
+            
+            # 1. Curvas de Aprendizaje
+            hist_path = Path(sel_ckpt['path']).with_suffix(".csv")
+            if hist_path.exists():
+                history_df = pd.read_csv(hist_path)
+                plot_learning_curves(history_df)
+            else:
+                st.info("⚠️ No hay historial de entrenamiento detallado disponible.")
+
+            # 2. Evaluación
+            st.markdown("### 🧪 Evaluación Detallada")
+            st.markdown("Ejecuta una evaluación completa sobre el conjunto de validación.")
+            
+            if st.button("🚀 Ejecutar Evaluación Completa", key=f"eval_{sel_ckpt['filename']}"):
+                with st.spinner("Cargando modelo y datos..."):
+                    try:
+                        # Cargar Vocab
+                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
+                        words = []
+                        if meta_path.exists():
+                            with open(meta_path) as f:
+                                words = json.load(f).get("config", {}).get("vocab", [])
+                        if not words:
+                            config = load_master_dataset_config()
+                            words = config.get("diccionario_seleccionado", {}).get("palabras", [])
+                            
+                        # Cargar Modelo
+                        model = TinyListenerLightning.load_from_checkpoint(sel_ckpt['path'], class_names=words)
+                        model.eval()
+                        device = encontrar_device()
+                        model.to(device)
+                        
+                        # Cargar Datos
+                        _, _, _, loaders = build_audio_dataloaders(batch_size=16, num_workers=0, seed=42)
+                        val_loader = loaders['val']
+                        
+                        # Inferencia
+                        all_preds = []
+                        all_probs = []
+                        all_labels = []
+                        progress_bar = st.progress(0)
+                        total_batches = len(val_loader)
+                        
+                        with torch.no_grad():
+                            for idx, batch in enumerate(val_loader):
+                                # TinyListenerLightning espera waveforms como lista en batch['waveforms']
+                                # Pero el dataloader devuelve batch['waveforms'] como lista de tensores
+                                waveforms = [w.to(device) for w in batch['waveforms']]
+                                labels = batch['label'].to(device)
+                                
+                                logits = model(waveforms)
+                                probs = torch.softmax(logits, dim=1)
+                                preds = torch.argmax(probs, dim=1)
+                                
+                                all_preds.extend(preds.cpu().numpy())
+                                all_probs.extend(probs.cpu().numpy())
+                                all_labels.extend(labels.cpu().numpy())
+                                progress_bar.progress((idx + 1) / total_batches)
+                                
+                        st.success("Evaluación completada.")
+                        
+                        # Visualizar
+                        st.markdown("#### Mapa de Calor de Probabilidades")
+                        display_labels = words if len(words) == len(model.class_names) else [str(i) for i in range(len(model.class_names))]
+                        
+                        # Usar el nuevo heatmap de probabilidades
+                        plot_probability_matrix(all_labels, all_probs, display_labels)
+                        
+                        # Reporte clásico
+                        display_classification_report(all_labels, all_preds, display_labels)
+                        
+                    except Exception as e:
+                        st.error(f"Error durante la evaluación: {e}")
+                        st.exception(e)
 
     # ==========================================
     # TAB 4: LABORATORIO
@@ -206,9 +294,20 @@ def run_training(epochs, lr, batch_size):
     final_path = save_dir / f"listener_{timestamp}.ckpt"
     trainer.save_checkpoint(final_path)
     
-    meta_config = {"epochs": epochs, "lr": lr, "batch_size": batch_size}
+    # Guardar vocabulario en metadata para el laboratorio
+    meta_config = {
+        "epochs": epochs, 
+        "lr": lr, 
+        "batch_size": batch_size,
+        "vocab": words # Guardar palabras entrenadas
+    }
     final_metrics = history_cb.history[-1] if history_cb.history else {}
     save_model_metadata(final_path, meta_config, final_metrics)
+    
+    # Guardar historial completo
+    if history_cb.history:
+        hist_path = final_path.with_suffix(".csv")
+        pd.DataFrame(history_cb.history).to_csv(hist_path, index=False)
     
     st.info(f"Modelo guardado en {final_path}")
     
@@ -224,23 +323,41 @@ def run_laboratory():
         return
         
     ckpt_opts = {c['filename']: c['path'] for c in checkpoints}
-    sel_ckpt = st.selectbox("Seleccionar Modelo", list(ckpt_opts.keys()))
+    sel_ckpt_name = st.selectbox("Seleccionar Modelo", list(ckpt_opts.keys()))
+    sel_ckpt_path = ckpt_opts[sel_ckpt_name]
     
-    config = load_master_dataset_config()
-    words = config.get("diccionario_seleccionado", {}).get("palabras", [])
+    # Intentar cargar vocabulario desde metadata
+    meta_path = Path(sel_ckpt_path).with_suffix(".ckpt.meta.json")
+    words = []
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            words = meta.get("config", {}).get("vocab", [])
+        except:
+            pass
+            
+    # Fallback al config global si no hay metadata
+    if not words:
+        st.warning("⚠️ No se encontró vocabulario en metadata. Usando configuración global (puede haber mismatch).")
+        config = load_master_dataset_config()
+        words = config.get("diccionario_seleccionado", {}).get("palabras", [])
     
     if st.button("Cargar Modelo"):
         st.session_state['listener_model'] = TinyListenerLightning.load_from_checkpoint(
-            ckpt_opts[sel_ckpt], class_names=words
+            sel_ckpt_path, class_names=words
         )
         st.session_state['listener_model'].eval()
-        st.success("Modelo cargado!")
+        st.session_state['listener_vocab'] = words # Guardar vocabulario en sesión
+        st.success(f"Modelo cargado con {len(words)} palabras!")
         
     if 'listener_model' in st.session_state:
+        model_vocab = st.session_state.get('listener_vocab', words)
+        
         # Seleccionar audio del dataset
         audio_dir = Path("data/audios")
         # Buscar audios recursivamente
-        audios = list(audio_dir.glob("**/*.wav"))[:20]
+        audios = list(audio_dir.glob("**/*.wav"))
         
         if not audios:
             st.error("No se encontraron audios.")
@@ -254,16 +371,30 @@ def run_laboratory():
             
             with torch.no_grad():
                 # Forward pass
-                # Listener espera lista de tensores o tensor batched
-                # load_waveform devuelve (samples,) -> unsqueeze -> (1, samples)
                 waveform = waveform.unsqueeze(0)
-                logits, _ = st.session_state['listener_model'](waveform)
+                logits = st.session_state['listener_model'](waveform)
                 probs = torch.softmax(logits, dim=1)
                 
-            top_probs, top_idxs = torch.topk(probs[0], 3)
-            for p, idx in zip(top_probs, top_idxs):
-                st.write(f"**{words[idx]}**: {p:.2%}")
-                st.progress(float(p))
+            # Visualización Mejorada
+            st.markdown("### 📊 Resultados del Análisis")
+            
+            col_res1, col_res2 = st.columns([1, 2])
+            
+            with col_res1:
+                st.markdown("**Top 3 Predicciones**")
+                top_probs, top_idxs = torch.topk(probs[0], 3)
+                for p, idx in zip(top_probs, top_idxs):
+                    word = model_vocab[idx]
+                    st.markdown(f"- **{word}**: `{p:.2%}`")
+                    st.progress(float(p))
+            
+            with col_res2:
+                st.markdown("**Distribución de Probabilidad**")
+                df_probs = pd.DataFrame({
+                    "Palabra": model_vocab,
+                    "Probabilidad": probs[0].numpy()
+                })
+                st.bar_chart(df_probs.set_index("Palabra"))
 
 if __name__ == "__main__":
     main()

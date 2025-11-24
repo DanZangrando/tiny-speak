@@ -33,8 +33,11 @@ from utils import (
     encontrar_device,
     get_default_words,
     load_waveform,
-    list_checkpoints
+    load_waveform,
+    list_checkpoints,
+    save_model_metadata
 )
+from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report
 
 # Configurar página
 st.set_page_config(
@@ -65,18 +68,6 @@ def get_custom_css():
     }
     </style>
     """
-
-def save_model_metadata(ckpt_path, config, metrics):
-    """Guarda metadatos del modelo para su gestión."""
-    meta_path = Path(ckpt_path).with_suffix(".ckpt.meta.json")
-    data = {
-        "timestamp": time.time(),
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "config": config,
-        "metrics": metrics
-    }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
 
 class RecognizerHistoryCallback(pl.Callback):
     def __init__(self):
@@ -145,6 +136,9 @@ def main():
     # ==========================================
     # TAB 3: MODELOS GUARDADOS
     # ==========================================
+    # ==========================================
+    # TAB 3: MODELOS GUARDADOS
+    # ==========================================
     with tabs[2]:
         st.markdown("### 📚 Gestión de Modelos")
         checkpoints = list_checkpoints("recognizer")
@@ -152,20 +146,115 @@ def main():
         if not checkpoints:
             st.info("No hay modelos entrenados.")
         else:
-            for ckpt in checkpoints:
-                with st.expander(f"🖼️ {ckpt['filename']} - {datetime.fromtimestamp(ckpt['timestamp']).strftime('%Y-%m-%d %H:%M')}"):
-                    col_info, col_actions = st.columns([3, 1])
-                    with col_info:
-                        meta = ckpt.get('meta', {})
-                        st.json(meta.get('config', {}), expanded=False)
-                        metrics = meta.get('metrics', {})
-                        if metrics:
-                            st.metric("Val Accuracy", f"{metrics.get('val_top1', 0):.2%}")
-                    with col_actions:
-                        if st.button("🗑️ Eliminar", key=f"del_{ckpt['filename']}"):
-                            Path(ckpt['path']).unlink(missing_ok=True)
-                            Path(ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                            st.rerun()
+            ckpt_opts = {f"{c['filename']} ({datetime.fromtimestamp(c['timestamp']).strftime('%Y-%m-%d %H:%M')})": c for c in checkpoints}
+            sel_ckpt_key = st.selectbox("Seleccionar Modelo para Detalles", list(ckpt_opts.keys()))
+            sel_ckpt = ckpt_opts[sel_ckpt_key]
+            
+            col_info, col_actions = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**Archivo:** `{sel_ckpt['filename']}`")
+                meta = sel_ckpt.get('meta', {})
+                
+                # Configuración
+                with st.expander("⚙️ Configuración de Entrenamiento", expanded=True):
+                    st.json(meta.get('config', {}))
+                
+                # Métricas
+                metrics = meta.get('metrics', {})
+                if metrics:
+                    st.markdown("#### 📊 Métricas Finales")
+                    m_col1, m_col2, m_col3 = st.columns(3)
+                    m_col1.metric("Val Accuracy", f"{metrics.get('val_top1', 0):.2f}%")
+                    m_col2.metric("Val Loss", f"{metrics.get('val_loss', 0):.4f}")
+                    m_col3.metric("Train Loss", f"{metrics.get('train_loss', 0):.4f}")
+                    
+            with col_actions:
+                st.markdown("### Acciones")
+                if st.button("🗑️ Eliminar Modelo", key=f"del_{sel_ckpt['filename']}", type="primary"):
+                    Path(sel_ckpt['path']).unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
+                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
+                    st.rerun()
+            
+            st.divider()
+            
+            # --- SECCIÓN DE ANALÍTICA AVANZADA ---
+            st.markdown("### 📈 Analítica del Modelo")
+            
+            # 1. Curvas de Aprendizaje (si existen)
+            hist_path = Path(sel_ckpt['path']).with_suffix(".csv")
+            if hist_path.exists():
+                history_df = pd.read_csv(hist_path)
+                plot_learning_curves(history_df)
+            else:
+                st.info("⚠️ No hay historial de entrenamiento detallado disponible para este modelo (modelos antiguos).")
+
+            # 2. Evaluación en Validation Set
+            st.markdown("### 🧪 Evaluación Detallada")
+            st.markdown("Ejecuta una evaluación completa sobre el conjunto de validación para generar la Matriz de Confusión.")
+            
+            if st.button("🚀 Ejecutar Evaluación Completa", key=f"eval_{sel_ckpt['filename']}"):
+                with st.spinner("Cargando modelo y datos..."):
+                    # Cargar Modelo
+                    try:
+                        # Intentar cargar vocabulario
+                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
+                        words = []
+                        if meta_path.exists():
+                            with open(meta_path) as f:
+                                words = json.load(f).get("config", {}).get("vocab", [])
+                        
+                        # Fallback vocab
+                        if not words:
+                            config = load_master_dataset_config()
+                            words = config.get("diccionario_seleccionado", {}).get("palabras", [])
+                            
+                        # Cargar Lightning Module
+                        kwargs = {"num_classes": len(words)} if words else {}
+                        model = TinyRecognizerLightning.load_from_checkpoint(sel_ckpt['path'], **kwargs)
+                        model.eval()
+                        device = encontrar_device()
+                        model.to(device)
+                        
+                        # Cargar Datos (Validation Set)
+                        _, _, _, loaders = build_visual_dataloaders(batch_size=32, num_workers=0)
+                        val_loader = loaders['val']
+                        
+                        # Inferencia Loop
+                        all_preds = []
+                        all_labels = []
+                        
+                        progress_bar = st.progress(0)
+                        total_batches = len(val_loader)
+                        
+                        with torch.no_grad():
+                            for idx, batch in enumerate(val_loader):
+                                images = batch["image"].to(device)
+                                labels = batch["label"].to(device)
+                                
+                                logits = model(images)
+                                preds = torch.argmax(logits, dim=1)
+                                
+                                all_preds.extend(preds.cpu().numpy())
+                                all_labels.extend(labels.cpu().numpy())
+                                progress_bar.progress((idx + 1) / total_batches)
+                                
+                        # Visualizar Resultados
+                        st.success("Evaluación completada.")
+                        
+                        # Matriz de Confusión
+                        st.markdown("#### Matriz de Confusión")
+                        # Si no tenemos vocab exacto, usar indices
+                        display_labels = words if words and len(words) == model.hparams.num_classes else [str(i) for i in range(model.hparams.num_classes)]
+                        
+                        plot_confusion_matrix(all_labels, all_preds, display_labels)
+                        
+                        # Reporte
+                        display_classification_report(all_labels, all_preds, display_labels)
+                        
+                    except Exception as e:
+                        st.error(f"Error durante la evaluación: {e}")
+                        st.exception(e)
 
     # ==========================================
     # TAB 4: LABORATORIO
@@ -177,18 +266,23 @@ def main():
 def run_training(epochs, lr, batch_size):
     # Cargar datos
     config = load_master_dataset_config()
-    selected_dict = config.get("diccionario_seleccionado", {})
-    words = selected_dict.get("palabras", [])
+    visual_cfg = config.get("visual_dataset", {})
+    generated = visual_cfg.get("generated_images", {})
+    
+    # Las clases son las letras/grafemas generados
+    words = sorted(generated.keys())
     
     if not words:
-        st.error("No hay palabras en el diccionario.")
+        st.error("No se encontraron clases visuales (letras). Genera un dataset visual primero.")
         return
 
     with st.spinner("Cargando datos..."):
-        train_loader, val_loader, test_loader = build_visual_dataloaders(
+        train_ds, val_ds, test_ds, loaders = build_visual_dataloaders(
             batch_size=batch_size,
             num_workers=0
         )
+        train_loader = loaders['train']
+        val_loader = loaders['val']
         
     # Modelo
     model = TinyRecognizerLightning(
@@ -221,9 +315,19 @@ def run_training(epochs, lr, batch_size):
     trainer.save_checkpoint(final_path)
     
     # Metadata
-    meta_config = {"epochs": epochs, "lr": lr, "batch_size": batch_size}
+    meta_config = {
+        "epochs": epochs, 
+        "lr": lr, 
+        "batch_size": batch_size,
+        "vocab": words
+    }
     final_metrics = history_cb.history[-1] if history_cb.history else {}
     save_model_metadata(final_path, meta_config, final_metrics)
+    
+    # Guardar historial completo para gráficas
+    if history_cb.history:
+        hist_path = final_path.with_suffix(".csv")
+        pd.DataFrame(history_cb.history).to_csv(hist_path, index=False)
     
     st.info(f"Modelo guardado en {final_path}")
     
@@ -241,31 +345,74 @@ def run_laboratory():
     ckpt_opts = {c['filename']: c['path'] for c in checkpoints}
     sel_ckpt = st.selectbox("Seleccionar Modelo", list(ckpt_opts.keys()))
     
-    # Cargar modelo
-    config = load_master_dataset_config()
-    words = config.get("diccionario_seleccionado", {}).get("palabras", [])
+    # Intentar cargar vocabulario desde metadata
+    sel_ckpt_path = ckpt_opts[sel_ckpt]
+    meta_path = Path(sel_ckpt_path).with_suffix(".ckpt.meta.json")
+    words = []
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            words = meta.get("config", {}).get("vocab", [])
+        except:
+            pass
+            
+    # Fallback al config global si no hay metadata
+    if not words:
+        st.warning("⚠️ No se encontró vocabulario en metadata. Intentando cargar con hiperparámetros del checkpoint...")
     
     if st.button("Cargar Modelo"):
-        st.session_state['recognizer_model'] = TinyRecognizerLightning.load_from_checkpoint(
-            ckpt_opts[sel_ckpt], num_classes=len(words)
-        )
-        st.session_state['recognizer_model'].eval()
-        st.success("Modelo cargado!")
+        # Si tenemos palabras (metadata), forzamos num_classes. Si no, confiamos en el checkpoint.
+        kwargs = {"num_classes": len(words)} if words else {}
+        
+        try:
+            st.session_state['recognizer_model'] = TinyRecognizerLightning.load_from_checkpoint(
+                sel_ckpt_path, **kwargs
+            )
+            st.session_state['recognizer_model'].eval()
+            
+            # Si no había palabras, generar etiquetas genéricas o intentar machear con config global
+            if not words:
+                model_n = st.session_state['recognizer_model'].hparams.num_classes
+                config = load_master_dataset_config()
+                visual_cfg = config.get("visual_dataset", {})
+                generated = visual_cfg.get("generated_images", {})
+                global_words = sorted(generated.keys())
+                
+                if len(global_words) == model_n:
+                    words = global_words
+                    st.info(f"✅ Coincidencia de tamaño ({model_n}). Usando clases visuales globales.")
+                else:
+                    words = [f"Clase {i}" for i in range(model_n)]
+                    st.warning(f"⚠️ Tamaño ({model_n}) no coincide con global ({len(global_words)}). Usando etiquetas genéricas.")
+            
+            st.session_state['recognizer_vocab'] = words
+            st.success(f"Modelo cargado con {len(words)} clases!")
+            
+        except Exception as e:
+            st.error(f"Error cargando modelo: {e}")
         
     if 'recognizer_model' in st.session_state:
+        model_vocab = st.session_state.get('recognizer_vocab', words)
+        
         # Seleccionar imagen del dataset visual
         visual_dir = Path("data/visual")
         if not visual_dir.exists():
             st.error("No hay dataset visual.")
             return
             
-        # Listar algunas imágenes
-        images = list(visual_dir.glob("**/*.png"))[:20] # Solo muestra algunas para probar
+        # Listar algunas imágenes (aleatorias para variedad)
+        all_images = list(visual_dir.glob("**/*.png")) + list(visual_dir.glob("**/*.jpg"))
+        import random
+        random.shuffle(all_images)
+        images = all_images[:20]
+        images = sorted(images) # Ordenar la selección para que el dropdown se vea ordenado
+        
         if not images:
-            st.error("No se encontraron imágenes.")
+            st.error(f"No se encontraron imágenes en {visual_dir}.")
             return
             
-        sel_img_path = st.selectbox("Probar con imagen:", [str(p) for p in images])
+        sel_img_path = st.selectbox(f"Probar con imagen (Total encontradas: {len(list(visual_dir.glob('**/*')))})", [str(p) for p in images])
         
         col_img, col_pred = st.columns(2)
         with col_img:
@@ -288,7 +435,12 @@ def run_laboratory():
             # Top 3
             top_probs, top_idxs = torch.topk(probs[0], 3)
             for p, idx in zip(top_probs, top_idxs):
-                st.write(f"**{words[idx]}**: {p:.2%}")
+                # Usar vocabulario del modelo
+                if idx < len(model_vocab):
+                    w = model_vocab[idx]
+                else:
+                    w = f"Class {idx}"
+                st.write(f"**{w}**: {p:.2%}")
                 st.progress(float(p))
 
 if __name__ == "__main__":
