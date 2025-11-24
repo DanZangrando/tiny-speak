@@ -117,8 +117,15 @@ dmypy.json
 *.mp3
 *.flac
 *.m4a
-data/
-!data/diccionarios/
+data/.*
+data/audios/
+data/tiny-emnist-26.tar.xz
+data/tiny-kalulu-200.tar.xz
+data/tiny-phones-200.tar.xz
+data/tiny-emnist-26/
+data/tiny-kalulu-200/
+data/tiny-phones-200/
+data/visual/
 test_audio.wav
 *.pth
 *.pt
