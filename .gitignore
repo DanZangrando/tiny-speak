@@ -151,7 +151,6 @@ Thumbs.db
 # Streamlit
 .streamlit/secrets.toml
 
-models/
 visual_dataset/
 lightning_logs/
 *.ckpt

@@ -13,11 +13,3 @@ enableXsrfProtection = false
 [browser]
 # Configuración del navegador
 gatherUsageStats = false
-
-[theme]
-# Tema nocturno moderno
-primaryColor = "#FF6B6B"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#262730"
-textColor = "#FAFAFA"
-font = "sans serif"
