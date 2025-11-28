@@ -95,22 +95,38 @@ def train_listener(
         
     trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
     
-    # 5. Save
-    save_dir = Path("experiments/models/listener")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    final_path = save_dir / f"listener_{language}_{timestamp}.ckpt"
-    trainer.save_checkpoint(final_path)
-    
-    # Metadata
-    meta_config = {
-        "epochs": epochs, "lr": lr, "batch_size": batch_size,
-        "vocab": words, "language": language, "type": "listener"
-    }
-    final_metrics = history_cb.history[-1] if history_cb.history else {}
-    save_model_metadata(final_path, meta_config, final_metrics)
-    
-    return str(final_path), history_cb.history
+    # 5. Save / Return Best
+    best_path = checkpoint_callback.best_model_path
+    if best_path and Path(best_path).exists():
+        print(f"Usando mejor modelo Listener: {best_path}")
+        final_path = best_path
+        
+        # Guardar metadata
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "vocab": words, "language": language, "type": "listener"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history
+    else:
+        # Fallback
+        save_dir = Path("experiments/models/listener")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        final_path = save_dir / f"listener_{language}_{timestamp}.ckpt"
+        trainer.save_checkpoint(final_path)
+        
+        # Metadata
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "vocab": words, "language": language, "type": "listener"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history
 
 def train_recognizer(
     language: str, 
@@ -179,22 +195,47 @@ def train_recognizer(
 
     trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
     
-    # 5. Save
-    save_dir = Path("experiments/models/recognizer")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    final_path = save_dir / f"recognizer_{language}_{timestamp}.ckpt"
-    trainer.save_checkpoint(final_path)
-    
-    # Metadata
-    meta_config = {
-        "epochs": epochs, "lr": lr, "batch_size": batch_size,
-        "classes": class_names, "language": language, "type": "recognizer"
-    }
-    final_metrics = history_cb.history[-1] if history_cb.history else {}
-    save_model_metadata(final_path, meta_config, final_metrics)
-    
-    return str(final_path), history_cb.history
+    # 5. Save / Return Best
+    # Si tenemos un mejor modelo guardado por el callback, lo usamos.
+    # Si no (ej. 1 epoca), usamos el final.
+    best_path = checkpoint_callback.best_model_path
+    if best_path and Path(best_path).exists():
+        print(f"Usando mejor modelo Recognizer: {best_path}")
+        final_path = best_path
+        
+        # Copiar metadata al mejor modelo también si es necesario, 
+        # pero por ahora retornamos el path del mejor.
+        # Para consistencia con el experimento, podríamos copiarlo a final_path?
+        # Mejor retornamos el best_path y guardamos metadata asociada a él.
+        
+        # Guardar metadata para el mejor modelo
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "classes": class_names, "language": language, "type": "recognizer"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        # Intentar buscar métricas del mejor epoch? Es complicado sin parsear.
+        # Usamos las últimas disponibles como proxy o las del callback si pudiéramos.
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history
+    else:
+        # Fallback: Guardar el actual
+        save_dir = Path("experiments/models/recognizer")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        final_path = save_dir / f"recognizer_{language}_{timestamp}.ckpt"
+        trainer.save_checkpoint(final_path)
+        
+        # Metadata
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "classes": class_names, "language": language, "type": "recognizer"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history
 
 def train_reader(
     language: str,
@@ -277,24 +318,45 @@ def train_reader(
         
     trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
     
-    # 5. Save
-    save_dir = Path("experiments/models/reader")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    final_path = save_dir / f"reader_{language}_{timestamp}.ckpt"
-    trainer.save_checkpoint(final_path)
-    
-    # Metadata
-    meta_config = {
-        "epochs": epochs, "lr": lr, "batch_size": batch_size,
-        "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
-        "listener_ckpt": listener_ckpt,
-        "recognizer_ckpt": recognizer_ckpt,
-        "language": language,
-        "vocab": words,
-        "type": "reader"
-    }
-    final_metrics = history_cb.history[-1] if history_cb.history else {}
-    save_model_metadata(final_path, meta_config, final_metrics)
-    
-    return str(final_path), history_cb.history
+    # 5. Save / Return Best
+    best_path = checkpoint_callback.best_model_path
+    if best_path and Path(best_path).exists():
+        print(f"Usando mejor modelo Reader: {best_path}")
+        final_path = best_path
+        
+        # Metadata
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
+            "listener_ckpt": listener_ckpt,
+            "recognizer_ckpt": recognizer_ckpt,
+            "language": language,
+            "vocab": words,
+            "type": "reader"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history
+    else:
+        # Fallback
+        save_dir = Path("experiments/models/reader")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        final_path = save_dir / f"reader_{language}_{timestamp}.ckpt"
+        trainer.save_checkpoint(final_path)
+        
+        # Metadata
+        meta_config = {
+            "epochs": epochs, "lr": lr, "batch_size": batch_size,
+            "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
+            "listener_ckpt": listener_ckpt,
+            "recognizer_ckpt": recognizer_ckpt,
+            "language": language,
+            "vocab": words,
+            "type": "reader"
+        }
+        final_metrics = history_cb.history[-1] if history_cb.history else {}
+        save_model_metadata(final_path, meta_config, final_metrics)
+        
+        return str(final_path), history_cb.history

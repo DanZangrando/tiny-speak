@@ -95,17 +95,13 @@ class TinyReaderLightning(pl.LightningModule):
         RecognizerPL = importlib.import_module("training.visual_module").VisualPathwayLightning
         
         print(f"Cargando VisualPathway (Ojo) desde {checkpoint_path}...")
-        try:
-            # Cargar el módulo completo
-            pl_module = RecognizerPL.load_from_checkpoint(
-                checkpoint_path,
-                map_location=self.device if self.device.type != 'cpu' else 'cpu'
-            )
-            return pl_module.model
-        except Exception as e:
-            print(f"Error cargando recognizer: {e}")
-            # Fallback dummy
-            return VisualPathway(num_classes=27) # 26 letras + ñ?
+        # Cargar el módulo completo
+        # Nota: No capturamos excepciones aquí para que falle visiblemente si el checkpoint está mal.
+        pl_module = RecognizerPL.load_from_checkpoint(
+            checkpoint_path,
+            map_location=self.device if hasattr(self, "device") else "cpu"
+        )
+        return pl_module.model
 
     def _get_word_images(self, word: str) -> torch.Tensor:
         """
@@ -154,18 +150,13 @@ class TinyReaderLightning(pl.LightningModule):
         from training.audio_module import PhonologicalPathwayLightning as ListenerPL
         
         print(f"Cargando PhonologicalPathway (Oído Interno) desde {checkpoint_path}...")
-        try:
-            # Cargar el módulo completo
-            pl_module = ListenerPL.load_from_checkpoint(
-                checkpoint_path,
-                class_names=self.class_names,
-                map_location=self.device if self.device.type != 'cpu' else 'cpu'
-            )
-            return pl_module.model
-        except Exception as e:
-            print(f"Error cargando listener: {e}")
-            # Fallback dummy (no debería pasar en producción)
-            return PhonologicalPathway(num_classes=len(self.class_names))
+        # Cargar el módulo completo
+        pl_module = ListenerPL.load_from_checkpoint(
+            checkpoint_path,
+            class_names=self.class_names,
+            map_location=self.device if hasattr(self, "device") else "cpu"
+        )
+        return pl_module.model
 
     def forward(self, x_seq, target_length=None):
         return self.reader(x_seq, target_length)

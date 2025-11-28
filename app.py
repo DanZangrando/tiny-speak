@@ -292,7 +292,23 @@ def verificar_consistencia_datasets():
     
     # Verificar dataset de audio (reutilizar master_config ya cargado)
     if master_config and 'generated_samples' in master_config:
-        palabras_audio = set(master_config['generated_samples'].keys())
+        samples = master_config['generated_samples']
+        
+        # Detectar y aplanar si es necesario para obtener las palabras
+        palabras_audio = set()
+        
+        is_nested = False
+        if samples:
+            first_val = next(iter(samples.values()))
+            if isinstance(first_val, dict) and not isinstance(first_val, list):
+                is_nested = True
+        
+        if is_nested:
+            for lang_data in samples.values():
+                if isinstance(lang_data, dict):
+                    palabras_audio.update(lang_data.keys())
+        else:
+            palabras_audio = set(samples.keys())
         
         # Verificar si hay palabras generadas y si coinciden
         if not master_config['generated_samples']:
@@ -609,6 +625,22 @@ def display_audio_statistics(audio_config, master_config):
     samples = audio_config['generated_samples']
     config_audio = master_config.get('configuracion_audio', {})
     
+    # Detectar estructura anidada (idioma -> palabra -> lista) y aplanar si es necesario
+    is_nested = False
+    if samples:
+        first_val = next(iter(samples.values()))
+        if isinstance(first_val, dict) and not isinstance(first_val, list):
+            is_nested = True
+            
+    if is_nested:
+        # Aplanar estructura: combinar todos los idiomas
+        flat_samples = {}
+        for lang, words_data in samples.items():
+            if isinstance(words_data, dict):
+                for word, vars_list in words_data.items():
+                    flat_samples[word] = vars_list
+        samples = flat_samples
+    
     # Métricas principales con diseño moderno
     col1, col2, col3, col4 = st.columns(4)
     
@@ -834,6 +866,19 @@ def display_comparative_analysis(audio_config, visual_config, master_config):
         st.success("✅ Todos los datasets están sincronizados correctamente")
     else:
         st.warning(f"⚠️ {consistencia['mensaje']}")
+        
+    # Preparar samples de audio (aplanando si es necesario)
+    audio_samples = audio_config.get('generated_samples', {}) if audio_config else {}
+    if audio_samples:
+        first_val = next(iter(audio_samples.values()))
+        if isinstance(first_val, dict) and not isinstance(first_val, list):
+            # Estructura anidada: idioma -> palabra -> lista
+            flat_samples = {}
+            for lang, words_data in audio_samples.items():
+                if isinstance(words_data, dict):
+                    for word, vars_list in words_data.items():
+                        flat_samples[word] = vars_list
+            audio_samples = flat_samples
     
     # Comparativa de completitud
     col1, col2 = st.columns(2)
@@ -842,10 +887,9 @@ def display_comparative_analysis(audio_config, visual_config, master_config):
         st.markdown("**📊 Estado de Completitud**")
         
         audio_completitud = 0
-        if audio_config and audio_config.get('generated_samples'):
-            samples = audio_config['generated_samples']
-            total = len(samples)
-            completas = sum(1 for v in samples.values() if len(v) > 1)
+        if audio_samples:
+            total = len(audio_samples)
+            completas = sum(1 for v in audio_samples.values() if len(v) > 1)
             audio_completitud = completas / total if total > 0 else 0
         
         visual_completitud = 0
@@ -891,15 +935,15 @@ def display_comparative_analysis(audio_config, visual_config, master_config):
     summary_data = []
     
     # Audio dataset
-    if audio_config and audio_config.get('generated_samples'):
-        samples = audio_config['generated_samples']
+    # Audio dataset
+    if audio_samples:
         config_audio = master_config.get('configuracion_audio', {})
         
         summary_data.append({
             'Dataset': '🎵 Audio',
-            'Estado': '✅ Generado' if samples else '❌ Vacío',
-            'Elementos': f"{len(samples)} palabras",
-            'Muestras': f"{sum(len(v) for v in samples.values()):,}",
+            'Estado': '✅ Generado',
+            'Elementos': f"{len(audio_samples)} palabras",
+            'Muestras': f"{sum(len(v) for v in audio_samples.values()):,}",
             'Método': config_audio.get('metodo_sintesis', 'N/A'),
             'Última Actualización': audio_config.get('fecha_generacion', 'N/A')[:16] if audio_config.get('fecha_generacion') else 'N/A'
         })

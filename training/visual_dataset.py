@@ -14,6 +14,7 @@ from torchvision import transforms
 
 from .config import get_repo_root, load_master_dataset_config
 from utils import get_language_letters
+import numpy as np
 
 
 Split = Literal["train", "val", "test"]
@@ -197,12 +198,28 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
         with Image.open(sample.path) as img:
             image = img.convert("RGB")
         tensor = self.transform(image)
+        
+        # Convert metadata floats to float32 for MPS compatibility
+        metadata = _convert_floats_to_float32(sample.metadata)
+        
         return {
             "image": tensor,
             "label": sample.label,
             "letter": sample.letter,
-            "metadata": sample.metadata,
+            "metadata": metadata,
         }
+
+
+def _convert_floats_to_float32(obj):
+    """Recursively convert Python floats to float32."""
+    if isinstance(obj, float):
+        # We need to return numpy float32 to force float32 tensor.
+        return np.float32(obj)
+    elif isinstance(obj, dict):
+        return {k: _convert_floats_to_float32(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_floats_to_float32(v) for v in obj]
+    return obj
 
 
 def build_visual_dataloaders(
