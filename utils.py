@@ -10,6 +10,18 @@ import subprocess
 from transformers import Wav2Vec2Model, Wav2Vec2Config
 import os
 from pathlib import Path
+import pandas as pd
+import pytorch_lightning as pl
+import streamlit as st
+import tempfile
+import librosa
+import soundfile as sf
+from gtts import gTTS
+from pydub import AudioSegment
+from pydub.effects import normalize
+import random
+from datetime import datetime
+from training.config import load_master_dataset_config
 
 def encontrar_device():
     if torch.cuda.is_available():
@@ -467,7 +479,7 @@ def delete_run_artifacts(model_type: str, metrics_filename: str) -> bool:
 
 # Constantes globales
 WAV2VEC_SR = 16000
-WAV2VEC_DIM = 768
+WAV2VEC_DIM = 256
 WAV2VEC_HZ = 49
 BATCH_SIZE = 32
 
@@ -490,3 +502,223 @@ def save_model_metadata(ckpt_path, config, metrics):
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+class RealTimePlotCallback(pl.Callback):
+    """Callback para actualizar gráficas de Streamlit en tiempo real durante el entrenamiento."""
+    def __init__(self, placeholder_loss, placeholder_acc):
+        self.placeholder_loss = placeholder_loss
+        self.placeholder_acc = placeholder_acc
+        self.history = []
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Recopilar métricas
+        metrics = {k: v.item() if isinstance(v, torch.Tensor) else v 
+                  for k, v in trainer.callback_metrics.items()}
+        metrics['epoch'] = trainer.current_epoch
+        self.history.append(metrics)
+        
+        # Crear DataFrame
+        df = pd.DataFrame(self.history)
+        
+        # Actualizar Gráfica de Pérdida (Loss)
+        loss_cols = [c for c in df.columns if 'loss' in c]
+        if loss_cols:
+            self.placeholder_loss.line_chart(df[loss_cols])
+            
+        # Actualizar Gráfica de Precisión (Accuracy/Top1)
+        acc_cols = [c for c in df.columns if 'acc' in c or 'top1' in c]
+        if acc_cols:
+            self.placeholder_acc.line_chart(df[acc_cols])
+
+class ReaderPredictionCallback(pl.Callback):
+    """Callback para visualizar predicciones del Reader en tiempo real."""
+    def __init__(self, val_loader, placeholder):
+        self.val_loader = val_loader
+        self.placeholder = placeholder
+        self.batch = next(iter(val_loader)) # Pre-cargar un batch fijo para consistencia visual
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        try:
+            # Obtener predicciones
+            words, logits = pl_module.get_predictions(self.batch)
+            
+            # Procesar resultados
+            probs = torch.softmax(logits, dim=-1)
+            top1_probs, top1_indices = torch.max(probs, dim=-1)
+            
+            predicted_words = [pl_module.class_names[idx] for idx in top1_indices]
+            
+            # Crear DataFrame para visualización
+            results = []
+            for i in range(min(len(words), 10)): # Mostrar max 10 ejemplos
+                is_correct = words[i] == predicted_words[i]
+                icon = "✅" if is_correct else "❌"
+                results.append({
+                    "Real": words[i],
+                    "Predicción": predicted_words[i],
+                    "Confianza": f"{top1_probs[i].item():.2%}",
+                    "Estado": icon
+                })
+                
+            df = pd.DataFrame(results)
+            
+            # Actualizar UI
+            with self.placeholder.container():
+                st.markdown(f"### 🔮 Predicciones (Época {trainer.current_epoch})")
+                st.dataframe(df, hide_index=True, use_container_width=True)
+                
+                # Métrica resumen
+                acc = sum([1 for r in results if r["Estado"] == "✅"]) / len(results)
+                st.progress(acc, text=f"Precisión en Batch de Muestra: {acc:.1%}")
+                
+        except Exception as e:
+            print(f"Error en visualización: {e}")
+
+# ==========================================
+# AUDIO GENERATION UTILS
+# ==========================================
+
+def change_speed(audio_segment, speed=1.0):
+    """Cambia la velocidad del audio usando pydub"""
+    new_sample_rate = int(audio_segment.frame_rate * speed)
+    return audio_segment._spawn(audio_segment.raw_data, overrides={
+        "frame_rate": new_sample_rate
+    }).set_frame_rate(audio_segment.frame_rate)
+
+def generar_audio_gtts(texto, idioma='es', velocidad=1.0):
+    """Genera audio usando Google Text-to-Speech (gTTS)"""
+    try:
+        tts = gTTS(text=texto, lang=idioma, slow=False)
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            tts.save(temp_file.name)
+            audio = AudioSegment.from_mp3(temp_file.name)
+            if velocidad != 1.0:
+                audio = change_speed(audio, velocidad)
+            audio = normalize(audio)
+            wav_buffer = io.BytesIO()
+            audio.export(wav_buffer, format="wav")
+            wav_bytes = wav_buffer.getvalue()
+            os.unlink(temp_file.name)
+            return wav_bytes
+    except Exception as e:
+        st.error(f"Error generando audio con gTTS: {e}")
+        return None
+
+def save_audio_file(audio_bytes, dataset_name, word, filename):
+    """Guarda el archivo de audio en el sistema de archivos"""
+    try:
+        base_dir = Path.cwd() / "data" / "audios" / dataset_name / word
+        base_dir.mkdir(parents=True, exist_ok=True)
+        file_path = base_dir / filename
+        with open(file_path, 'wb') as f:
+            f.write(audio_bytes)
+        return str(file_path.relative_to(Path.cwd()))
+    except Exception as e:
+        st.error(f"Error guardando archivo de audio {filename}: {e}")
+        return None
+
+def generar_audio_espeak(texto, idioma='es', rate=80, pitch=70, amplitude=120):
+    """Genera audio usando espeak"""
+    try:
+        import subprocess
+        cmd = ['espeak', '-v', f'{idioma}', '-s', str(rate), '-p', str(pitch), '-a', str(amplitude), '-w', '/dev/stdout', texto]
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        return result.stdout
+    except Exception as e:
+        st.error(f"Error con espeak: {e}")
+        return None
+
+def generar_audio_segun_metodo(texto, metodo='gtts', idioma='es', **kwargs):
+    if metodo == 'gtts':
+        return generar_audio_gtts(texto, idioma, kwargs.get('velocidad', 1.0))
+    elif metodo == 'espeak':
+        return generar_audio_espeak(texto, idioma, kwargs.get('rate', 80), kwargs.get('pitch', 70), kwargs.get('amplitude', 120))
+    return None
+
+def aplicar_variaciones_audio(audio_bytes, variacion_tipo, config_rangos=None):
+    if not audio_bytes: return None, {}
+    if config_rangos is None:
+        config_rangos = {'pitch': [0.8, 1.3], 'speed': [0.7, 1.4], 'volume': [0.8, 1.2]}
+    
+    try:
+        audio = AudioSegment.from_wav(io.BytesIO(audio_bytes))
+        params = {'pitch_factor': 1.0, 'speed_factor': 1.0, 'volume_factor': 1.0, 'tipo': variacion_tipo}
+        
+        if variacion_tipo == 'pitch_alto':
+            params['pitch_factor'] = random.uniform(1.1, config_rangos['pitch'][1])
+            new_rate = int(audio.frame_rate * params['pitch_factor'])
+            audio = audio._spawn(audio.raw_data, overrides={"frame_rate": new_rate}).set_frame_rate(22050)
+        elif variacion_tipo == 'pitch_bajo':
+            params['pitch_factor'] = random.uniform(config_rangos['pitch'][0], 0.9)
+            new_rate = int(audio.frame_rate * params['pitch_factor'])
+            audio = audio._spawn(audio.raw_data, overrides={"frame_rate": new_rate}).set_frame_rate(22050)
+        elif variacion_tipo == 'rapido':
+            params['speed_factor'] = random.uniform(1.1, config_rangos['speed'][1])
+            audio = change_speed(audio, params['speed_factor'])
+        elif variacion_tipo == 'lento':
+            params['speed_factor'] = random.uniform(config_rangos['speed'][0], 0.9)
+            audio = change_speed(audio, params['speed_factor'])
+        elif variacion_tipo == 'fuerte':
+            params['volume_factor'] = random.uniform(1.1, config_rangos['volume'][1])
+            audio = audio + (20 * np.log10(params['volume_factor']))
+        elif variacion_tipo == 'suave':
+            params['volume_factor'] = random.uniform(config_rangos['volume'][0], 0.9)
+            audio = audio + (20 * np.log10(params['volume_factor']))
+            
+        audio = normalize(audio)
+        wav_buffer = io.BytesIO()
+        audio.export(wav_buffer, format="wav")
+        return wav_buffer.getvalue(), params
+    except Exception as e:
+        st.error(f"Error aplicando variación {variacion_tipo}: {e}")
+        return None, {}
+
+def generar_variaciones_completas(texto, idioma, num_variaciones, metodo_sintesis='gtts', dataset_name='custom_dataset', rangos=None):
+    """Genera audio original y variaciones."""
+    resultados = []
+    # st.write(f"🎵 Generando: {texto} ({idioma})") # Comentado para no saturar UI en batch
+    
+    audio_base = generar_audio_segun_metodo(texto, metodo_sintesis, idioma)
+    if not audio_base: return []
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename_original = f"{texto}_original_{timestamp}.wav"
+    file_path_original = save_audio_file(audio_base, dataset_name, texto, filename_original)
+    
+    duracion_ms = len(AudioSegment.from_wav(io.BytesIO(audio_base)))
+    resultados.append({
+        'file_path': file_path_original, 'duracion_ms': duracion_ms, 'timestamp': datetime.now().isoformat(),
+        'tipo': 'original', 'metodo_sintesis': metodo_sintesis, 'pitch_factor': 1.0, 'speed_factor': 1.0, 'volume_factor': 1.0
+    })
+    
+    tipos_variacion = ['pitch_alto', 'pitch_bajo', 'rapido', 'lento', 'fuerte', 'suave']
+    
+    config = load_master_dataset_config()
+    rangos = config.get('configuracion_audio', {}).get('rangos', {
+        'pitch': [0.8, 1.3],
+        'speed': [0.7, 1.4],
+        'volume': [0.8, 1.2]
+    })    
+    for i in range(num_variaciones):
+        tipo_var = random.choice(tipos_variacion)
+        audio_variado, params = aplicar_variaciones_audio(audio_base, tipo_var, rangos)
+        if audio_variado:
+            filename_var = f"{texto}_{tipo_var}_{i}_{timestamp}.wav"
+            file_path_var = save_audio_file(audio_variado, dataset_name, texto, filename_var)
+            duracion_var_ms = len(AudioSegment.from_wav(io.BytesIO(audio_variado)))
+            resultados.append({
+                'file_path': file_path_var, 'duracion_ms': duracion_var_ms, 'timestamp': datetime.now().isoformat(),
+                'tipo': tipo_var, 'metodo_sintesis': metodo_sintesis, **params
+            })
+            
+    return resultados
+
+def get_language_letters(language='es'):
+    """Obtiene todas las letras de un idioma específico"""
+    language_alphabets = {
+        'es': list('abcdefghijklmnñopqrstuvwxyz'),  # Español
+        'en': list('abcdefghijklmnopqrstuvwxyz'),   # Inglés
+        'fr': list('abcdefghijklmnopqrstuvwxyzàáâäèéêëìíîïòóôöùúûü'),  # Francés básico
+        'de': list('abcdefghijklmnopqrstuvwxyzäöüß'),  # Alemán básico
+    }
+    return language_alphabets.get(language, language_alphabets['es'])

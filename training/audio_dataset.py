@@ -124,13 +124,55 @@ def _compute_split_counts(total: int, ratios: Dict[str, float]) -> Dict[str, int
     return raw_counts
 
 
-def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
+def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int, target_language: str | None = None) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
     generated = config.get("generated_samples", {}) or {}
-    words = sorted(generated.keys())
+    
+    # Filtrar por idioma si se especifica y la estructura es anidada
+    if target_language:
+        # Si la estructura es anidada (Lang -> Word -> List)
+        if target_language in generated and isinstance(generated[target_language], dict):
+            generated = generated[target_language]
+        # Si la estructura es plana pero queremos filtrar (no soportado directamente en estructura plana antigua)
+        # Asumimos que si se pide un idioma y la estructura es plana, se usa todo (backward compat) 
+        # o se devuelve vacío si se quiere ser estricto. 
+        # Por ahora: Si generated tiene keys que NO son el idioma, asumimos estructura plana antigua.
+    
+    # Si no se especifica idioma, aplanar todo (comportamiento anterior/global)
+    # OJO: Si la estructura es anidada y NO se especifica idioma, esto fallará si no aplanamos.
+    # Vamos a usar una lógica de aplanado robusta similar a la usada en Analytics.
+    
+    final_generated = {}
+    
+    if target_language:
+        # Caso 1: Idioma específico solicitado
+        if target_language in generated and isinstance(generated[target_language], dict):
+             # Estructura anidada correcta
+             final_generated = generated[target_language]
+        elif any(isinstance(v, list) for v in generated.values()):
+             # Estructura plana antigua (ignora target_language o asume que es el único)
+             # Podríamos chequear si target_language coincide con algún metadata, pero por ahora lo dejamos pasar
+             final_generated = generated
+    else:
+        # Caso 2: Sin idioma específico (cargar todo aplanado)
+        for key, value in generated.items():
+            if isinstance(value, list):
+                # Estructura plana: key es palabra
+                final_generated[key] = value
+            elif isinstance(value, dict):
+                # Estructura anidada: key es idioma
+                for word, variations in value.items():
+                    if isinstance(variations, list):
+                        # Prefijo de idioma para evitar colisiones? 
+                        # O mezclar todo? Para entrenamiento global, mezclar.
+                        if word not in final_generated:
+                            final_generated[word] = []
+                        final_generated[word].extend(variations)
+
+    words = sorted(final_generated.keys())
     rng = random.Random(seed)
 
     samples_by_word: Dict[str, List[AudioSample]] = {word: [] for word in words}
-    for word, entries in generated.items():
+    for word, entries in final_generated.items():
         for entry in entries:
             waveform = None
             sr = None
@@ -181,6 +223,8 @@ def build_audio_datasets(
     seed: int,
     split_ratios: Dict[str, float] | None = None,
     target_sr: int = WAV2VEC_SR,
+    whitelist_words: List[str] | None = None,
+    target_language: str | None = None,
 ) -> Dict[str, AudioWordDataset]:
     config = load_master_dataset_config()
     ratios = split_ratios or DEFAULT_AUDIO_SPLIT_RATIOS
@@ -188,9 +232,14 @@ def build_audio_datasets(
     if not math.isclose(ratio_total, 1.0, rel_tol=1e-3):
         raise ValueError("Las proporciones de split de audio deben sumar 1.0")
 
-    words, samples_by_word = _load_all_samples(config, target_sr=target_sr, seed=seed)
+    words, samples_by_word = _load_all_samples(config, target_sr=target_sr, seed=seed, target_language=target_language)
+    
+    if whitelist_words:
+        words = [w for w in words if w in whitelist_words]
+        samples_by_word = {w: s for w, s in samples_by_word.items() if w in whitelist_words}
+        
     if not words:
-        raise ValueError("El master dataset de audio no contiene muestras generadas.")
+        raise ValueError("El master dataset de audio no contiene muestras generadas (o el filtro eliminó todas).")
 
     splits: Dict[str, List[AudioSample]] = {key: [] for key in ratios.keys()}
     for word in words:
@@ -233,8 +282,16 @@ def build_audio_dataloaders(
     split_ratios: Dict[str, float] | None = None,
     target_sr: int = WAV2VEC_SR,
     shuffle_train: bool = True,
+    whitelist_words: List[str] | None = None,
+    target_language: str | None = None,
 ) -> Tuple[AudioWordDataset, AudioWordDataset, AudioWordDataset, Dict[str, DataLoader]]:
-    datasets = build_audio_datasets(seed=seed, split_ratios=split_ratios, target_sr=target_sr)
+    datasets = build_audio_datasets(
+        seed=seed, 
+        split_ratios=split_ratios, 
+        target_sr=target_sr, 
+        whitelist_words=whitelist_words,
+        target_language=target_language
+    )
 
     loaders: Dict[str, DataLoader] = {}
     for split_name, dataset in datasets.items():

@@ -55,42 +55,9 @@ def apply_sidebar_css():
     """Aplica CSS global para la sidebar moderna"""
     st.markdown("""
     <style>
-    /* Modernización completa de la sidebar */
-    .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%) !important;
-    }
-    
-    /* Ocultar elementos por defecto de Streamlit en sidebar */
-    .css-1d391kg .stRadio, .css-1d391kg .stSelectbox {
-        display: none !important;
-    }
-    
-    /* Estilizar todos los elementos de texto en sidebar */
-    section[data-testid="stSidebar"] * {
-        color: rgba(255, 255, 255, 0.9) !important;
-    }
-    
-    /* Estilizar contenedor principal de sidebar */
-    section[data-testid="stSidebar"] > div {
-        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%) !important;
-        padding: 1rem !important;
-    }
-    
-    /* Estilo para botones en sidebar */
-    .css-1d391kg .stButton > button {
-        background: rgba(255, 255, 255, 0.1) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        border-radius: 8px !important;
-        color: white !important;
-        font-weight: 500 !important;
-        transition: all 0.3s ease !important;
-        backdrop-filter: blur(5px) !important;
-    }
-    
-    .css-1d391kg .stButton > button:hover {
-        background: rgba(255, 255, 255, 0.2) !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+    /* Estilo para botones en sidebar - sutil */
+    section[data-testid="stSidebar"] .stButton > button {
+        width: 100%;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -136,8 +103,30 @@ def display_modern_sidebar(page_prefix="default"):
         
         # Audio Dataset Card
         if audio_config:
-            audio_samples = sum(len(v) for v in audio_config.values())
-            audio_words = len(audio_config)
+            audio_samples = 0
+            audio_words = 0
+            
+            # Detectar estructura (plana vs anidada)
+            is_nested = False
+            if audio_config:
+                first_val = next(iter(audio_config.values()))
+                if isinstance(first_val, dict) and not isinstance(first_val, list):
+                    is_nested = True
+            
+            if is_nested:
+                # Estructura anidada: idioma -> palabra -> lista
+                for lang_data in audio_config.values():
+                    if isinstance(lang_data, dict):
+                        audio_words += len(lang_data)
+                        for word_variations in lang_data.values():
+                            audio_samples += len(word_variations)
+            else:
+                # Estructura plana antigua: palabra -> lista
+                audio_words = len(audio_config)
+                for word_variations in audio_config.values():
+                    if isinstance(word_variations, list):
+                        audio_samples += len(word_variations)
+                        
             audio_color = "rgba(76, 175, 80, 0.2)"
             audio_status = f"✅ {audio_samples:,} muestras ({audio_words} palabras)"
         else:
@@ -179,15 +168,22 @@ def display_modern_sidebar(page_prefix="default"):
             st.markdown("""
             <div style="font-size: 0.85rem;">
             
-            **🎵 TinyListener**
-            *   **Base:** `facebook/wav2vec2-base-es-voxpopuli-v2`
-            *   **Head:** LSTM (Hidden: 64, Layers: 2)
-            *   **Classifier:** Linear Projection
+            **🎵 PhonologicalPathway**
+            *   **Input:** Audio (Waveform)
+            *   **Features:** MelSpectrogram
+            *   **Encoder:** Transformer Encoder
+            *   **Output:** Concept Class
             
-            **🖼️ TinyRecognizer** 
-            *   **Backbone:** CORnet-Z (V1→V2→V4→IT)
-            *   **Decoder:** AvgPool → Flatten → Linear (512→1000)
-            *   **Classifier:** Linear Projection
+            **🖼️ VisualPathway** 
+            *   **Input:** Image (Letter)
+            *   **Backbone:** CNN (Custom)
+            *   **Decoder:** Linear Classifier
+            *   **Output:** Letter Class
+            
+            **🧠 TinyReader**
+            *   **Input:** Spelling (Visual Concepts)
+            *   **Model:** Transformer Decoder
+            *   **Output:** Audio Embeddings (Imagined Speech)
             
             </div>
             """, unsafe_allow_html=True)

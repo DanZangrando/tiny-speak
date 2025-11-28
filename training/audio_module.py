@@ -8,12 +8,12 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
-from models import TinyListener, TinySpeak
+from models import PhonologicalPathway
 from utils import WAV2VEC_DIM, load_wav2vec_model
 
 
-class TinyListenerLightning(pl.LightningModule):
-    """LightningModule que encapsula TinySpeak + Wav2Vec para clasificación de audio."""
+class PhonologicalPathwayLightning(pl.LightningModule):
+    """LightningModule para entrenar PhonologicalPathway (Custom CNN+Transformer)."""
 
     def __init__(
         self,
@@ -21,41 +21,31 @@ class TinyListenerLightning(pl.LightningModule):
         *,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
-        freeze_wav2vec: bool = True,
-        hidden_dim: int = 128,
-        num_layers: int = 2,
-        wav2vec_target_layer: int = 5,
+        hidden_dim: int = 256,
+        num_conv_layers: int = 3,
+        num_transformer_layers: int = 2,
         topk: Iterable[int] | None = (1, 3, 5),
+        # Argumentos legacy ignorados
+        freeze_wav2vec: bool = True, 
+        wav2vec_target_layer: int = 5,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=("class_names",))
 
         self.class_names = list(class_names)
         if not self.class_names:
-            raise ValueError("Se requieren clases para inicializar TinyListenerLightning")
+            raise ValueError("Se requieren clases para inicializar PhonologicalPathwayLightning")
 
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
-        self.freeze_wav2vec = freeze_wav2vec
         self.topk = tuple(sorted(set(topk or (1,))))
 
-        self.speech_model = TinySpeak(
+        # Instanciar nuevo modelo custom
+        self.model = PhonologicalPathway(
             num_classes=len(self.class_names),
             hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            wav2vec_dim=WAV2VEC_DIM,
-        )
-        self.speech_model.update_vocabulary(self.class_names)
-
-        self.wav2vec_model = load_wav2vec_model(device="cpu")
-        if self.freeze_wav2vec:
-            for param in self.wav2vec_model.parameters():
-                param.requires_grad = False
-
-        self.listener = TinyListener(
-            tiny_speak=self.speech_model,
-            wav2vec_model=self.wav2vec_model,
-            wav2vec_target_layer=wav2vec_target_layer,
+            num_conv_layers=num_conv_layers,
+            num_transformer_layers=num_transformer_layers
         )
 
         self._validation_buffer: List[Dict] = []
@@ -65,7 +55,13 @@ class TinyListenerLightning(pl.LightningModule):
     # Forward helpers
     # ------------------------------------------------------------------
     def forward(self, waveforms: List[torch.Tensor]) -> torch.Tensor:
-        logits, _ = self.listener(waveforms)
+        # PhonologicalPathway espera (B, T)
+        # Si viene lista de tensores, padear
+        if isinstance(waveforms, list):
+            from torch.nn.utils.rnn import pad_sequence
+            waveforms = pad_sequence(waveforms, batch_first=True).to(self.device)
+            
+        logits, _ = self.model(waveforms)
         return logits
 
     # ------------------------------------------------------------------

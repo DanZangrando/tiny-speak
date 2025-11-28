@@ -46,15 +46,28 @@ DICCIONARIOS_METADATA = {
     }
 }
 
-def get_diccionario_predefinido(nombre_diccionario):
-    """Obtiene un diccionario predefinido por su nombre, cargando las palabras desde el archivo"""
+def get_diccionario_predefinido(nombre_diccionario, idioma='es'):
+    """
+    Obtiene un diccionario predefinido por su nombre e idioma.
+    
+    Args:
+        nombre_diccionario: Clave del diccionario (ej: 'animales')
+        idioma: Código de idioma ('es', 'en', 'fr'). Default 'es'.
+    """
     metadata = DICCIONARIOS_METADATA.get(nombre_diccionario)
     if not metadata:
         return None
     
+    # Construir nombre de archivo según idioma
+    filename = metadata["archivo"]
+    if idioma and idioma != 'es':
+        # Asumimos que los archivos traducidos tienen sufijo _en.txt, _fr.txt
+        # ej: animales.txt -> animales_en.txt
+        filename = filename.replace(".txt", f"_{idioma}.txt")
+        
     # Construir ruta al archivo
     base_dir = Path(__file__).parent
-    archivo_path = base_dir / "data" / "diccionarios" / metadata["archivo"]
+    archivo_path = base_dir / "data" / "diccionarios" / filename
     
     palabras = []
     try:
@@ -62,14 +75,19 @@ def get_diccionario_predefinido(nombre_diccionario):
             with open(archivo_path, 'r', encoding='utf-8') as f:
                 palabras = [line.strip() for line in f if line.strip()]
         else:
+            # Si no existe la traducción, devolver lista vacía o fallback?
+            # Por ahora lista vacía para indicar que no hay datos para ese idioma
             print(f"Advertencia: No se encontró el archivo de diccionario {archivo_path}")
+            return None
     except Exception as e:
-        print(f"Error leyendo diccionario {nombre_diccionario}: {e}")
+        print(f"Error leyendo diccionario {nombre_diccionario} ({idioma}): {e}")
+        return None
         
     return {
-        "nombre": metadata["nombre"],
+        "nombre": f"{metadata['nombre']} ({idioma.upper()})",
         "descripcion": metadata["descripcion"],
-        "palabras": palabras
+        "palabras": palabras,
+        "idioma": idioma
     }
 
 def get_nombres_diccionarios():

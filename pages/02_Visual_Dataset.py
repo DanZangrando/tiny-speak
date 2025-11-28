@@ -81,6 +81,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Definir fuentes del sistema disponibles y robustas
+SYSTEM_FONTS = {
+    "DejaVu Sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "DejaVu Serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "Noto Sans Mono": "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+    "Liberation Sans": "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", # Common fallback
+    "Ubuntu": "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf"
+}
+
+def get_font_path(font_name):
+    """Obtiene el path real de la fuente o un fallback seguro"""
+    # 1. Buscar en mapa de fuentes del sistema
+    if font_name in SYSTEM_FONTS:
+        path = Path(SYSTEM_FONTS[font_name])
+        if path.exists(): return str(path)
+    
+    # 2. Fallback a DejaVu Sans (muy robusta para unicode)
+    fallback = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    if fallback.exists(): return str(fallback)
+    
+    # 3. Último recurso
+    return "arial.ttf" 
+
 def load_master_config():
     """Cargar configuración desde master_dataset_config.json PRESERVANDO todo el contenido existente"""
     # Usar ruta absoluta basada en la ubicación del archivo actual
@@ -196,31 +219,49 @@ def save_master_config(config):
         return False
 
 def get_unique_letters_from_dataset():
-    """Detecta letras únicas del diccionario seleccionado actualmente"""
+    """Detecta letras únicas del experimento o dataset actual (Soporte Multi-idioma)"""
     config = load_master_config()
-    
-    # Obtener el diccionario seleccionado
-    diccionario_info = config.get('diccionario_seleccionado', {})
-    
     unique_letters = set()
     
-    # Si hay un diccionario seleccionado, extraer letras de sus palabras
+    # 1. Estrategia Principal: Configuración de Experimento (Multi-idioma)
+    exp_config = config.get('experiment_config', {})
+    if exp_config and 'languages' in exp_config:
+        langs = exp_config['languages']
+        
+        # Usar el alfabeto completo de cada idioma configurado
+        # Esto asegura que se incluyan letras como 'w' (EN) o 'ç' (FR) 
+        # aunque no estén presentes en las palabras del diccionario actual.
+        for lang in langs:
+            lang_letters = get_language_letters(lang)
+            unique_letters.update(lang_letters)
+            
+        if unique_letters:
+            return sorted(list(unique_letters))
+
+    # 2. Estrategia Secundaria: Diccionario Seleccionado (Legacy/Single Lang)
+    diccionario_info = config.get('diccionario_seleccionado', {})
     if diccionario_info and 'palabras' in diccionario_info:
         palabras = diccionario_info['palabras']
         for palabra in palabras:
-            # Convertir a minúsculas y extraer solo letras
             for char in palabra.lower():
                 if char.isalpha():
                     unique_letters.add(char)
-    else:
-        # Fallback: buscar en samples generados si no hay diccionario
-        audio_samples = config.get('generated_samples', {})
-        for vocabulary_key, samples in audio_samples.items():
-            for sample in samples:
-                word = sample.get('word', '').lower()
-                for char in word:
-                    if char.isalpha():
-                        unique_letters.add(char)
+        if unique_letters:
+            return sorted(list(unique_letters))
+
+    # 3. Fallback: Muestras Generadas (con aplanado robusto para evitar AttributeError)
+    audio_samples = config.get('generated_samples', {})
+    if audio_samples:
+        for key, value in audio_samples.items():
+            if isinstance(value, list):
+                # Estructura plana: key es la palabra
+                for char in key.lower():
+                    if char.isalpha(): unique_letters.add(char)
+            elif isinstance(value, dict):
+                # Estructura anidada: key es idioma, value es dict de palabras
+                for word in value.keys():
+                    for char in word.lower():
+                        if char.isalpha(): unique_letters.add(char)
     
     return sorted(list(unique_letters))
 
@@ -270,8 +311,11 @@ def generate_letter_image(letter, font_size=32, rotation=0, noise_level=0.0, fon
         
         # Intentar cargar font (usar font por defecto si falla)
         try:
-            font = ImageFont.truetype(font_name, font_size)
-        except:
+            # Resolver path real de la fuente
+            font_path = get_font_path(font_name)
+            font = ImageFont.truetype(font_path, font_size)
+        except Exception as e:
+            # st.warning(f"Font error {font_name}: {e}")
             font = ImageFont.load_default()
         
         # Calcular posición centrada
@@ -519,14 +563,19 @@ def main():
     # === SECCIÓN 1: DETECCIÓN Y CONFIGURACIÓN DE LETRAS ===
     st.markdown("## 🔍 Análisis del Dataset")
     
-    # Mostrar información del diccionario seleccionado para depuración
+    # Mostrar información de la fuente de datos
+    exp_config = config.get('experiment_config', {})
     diccionario_info = config.get('diccionario_seleccionado', {})
-    if diccionario_info:
+    
+    if exp_config and 'languages' in exp_config:
+        langs = exp_config.get('languages', [])
+        base_dict = exp_config.get('base_dictionary', 'Desconocido')
+        st.info(f"🧪 **Experimento Activo**: {base_dict} - Idiomas: {', '.join([l.upper() for l in langs])}")
+    elif diccionario_info:
         st.info(f"📚 **Diccionario activo**: {diccionario_info.get('nombre', 'Sin nombre')} - "
-                f"{len(diccionario_info.get('palabras', []))} palabras: "
-                f"{', '.join(diccionario_info.get('palabras', [])[:5])}")
+                f"{len(diccionario_info.get('palabras', []))} palabras")
     else:
-        st.warning("⚠️ No hay diccionario seleccionado. Ve al dashboard principal para seleccionar uno.")
+        st.warning("⚠️ No hay configuración de experimento ni diccionario seleccionado.")
     
     # Detectar letras únicas del dataset actual
     dataset_letters = get_unique_letters_from_dataset()
@@ -635,11 +684,11 @@ def main():
     
     with params_col3:
         st.markdown("**📝 Fuentes**")
-        available_fonts = ["Arial", "Times New Roman", "Courier New"]
+        available_fonts = list(SYSTEM_FONTS.keys())
         selected_fonts = st.multiselect(
             "Fuentes a usar",
             available_fonts,
-            default=visual_config.get('image_params', {}).get('fonts', ["Arial"]),
+            default=visual_config.get('image_params', {}).get('fonts', ["DejaVu Sans"]),
             help="Selecciona las fuentes para generar variedad"
         )
     

@@ -8,11 +8,11 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from models import TinyRecognizer
+from models import VisualPathway
 
 
-class TinyRecognizerLightning(pl.LightningModule):
-    """LightningModule that encapsulates TinyRecognizer training & evaluation."""
+class VisualPathwayLightning(pl.LightningModule):
+    """LightningModule that encapsulates VisualPathway training & evaluation."""
 
     def __init__(
         self,
@@ -20,33 +20,20 @@ class TinyRecognizerLightning(pl.LightningModule):
         *,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
-        freeze_backbone: bool = False,
+        hidden_dim: int = 512,
         topk: Iterable[int] | None = (1, 3, 5),
+        # Argumentos legacy ignorados
+        freeze_backbone: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
 
-        # ✅ MODO DIRECTO: Para entrenamiento standalone de TinyRecognizer
-        self.model = TinyRecognizer(num_classes=num_classes, use_embeddings=False)
+        # Instanciar nuevo modelo custom
+        self.model = VisualPathway(
+            num_classes=num_classes, 
+            hidden_dim=hidden_dim
+        )
         
-        # Inicialización simple - solo el clasificador final
-        self._initialize_classifier_only()
-        
-        if freeze_backbone:
-            # ✅ CORRECCIÓN: Congelar solo backbone (V1-IT), dejar decoder entrenable
-            for name, child in self.model.cornet.named_children():
-                if name == 'decoder':
-                    for param in child.parameters():
-                        param.requires_grad = True
-                else:
-                    for param in child.parameters():
-                        param.requires_grad = False
-            
-            # Asegurar que el clasificador (si existe) sea entrenable
-            if self.model.classifier is not None:
-                for param in self.model.classifier.parameters():
-                    param.requires_grad = True
-
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.topk = tuple(sorted(set(topk or (1,))))
@@ -55,31 +42,10 @@ class TinyRecognizerLightning(pl.LightningModule):
         self._validation_buffer: List[Dict] = []
         self._test_buffer: List[Dict] = []
 
-    def _initialize_classifier_only(self):
-        """Inicialización conservadora - solo la capa de salida final."""
-        # ✅ CORRECCIÓN: Manejar ambos modos de TinyRecognizer
-        if self.model.use_embeddings and hasattr(self.model, 'classifier') and self.model.classifier is not None:
-            # Modo embeddings: inicializar clasificador separado
-            torch.nn.init.xavier_normal_(self.model.classifier.weight)
-            if self.model.classifier.bias is not None:
-                torch.nn.init.constant_(self.model.classifier.bias, 0)
-        else:
-            # Modo directo: inicializar capa final del decoder
-            # Acceder via _modules porque cornet es Sequential
-            decoder = self.model.cornet._modules['decoder']
-            output_layer = decoder._modules['output']
-            if hasattr(output_layer, 'weight'):
-                torch.nn.init.xavier_normal_(output_layer.weight)
-                if output_layer.bias is not None:
-                    torch.nn.init.constant_(output_layer.bias, 0)
-
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        # ✅ CORRECCIÓN: Manejar ambos modos de TinyRecognizer
-        result = self.model(images)
-        if isinstance(result, tuple):
-            return result[0]  # Modo embeddings: (logits, embeddings)
-        else:
-            return result  # Modo directo: solo logits
+        # VisualPathway retorna (logits, embeddings)
+        logits, _ = self.model(images)
+        return logits
 
     # ------------------------------------------------------------------
     # Training & evaluation steps

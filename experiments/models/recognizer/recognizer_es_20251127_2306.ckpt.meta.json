@@ -1,0 +1,51 @@
+{
+  "timestamp": 1764295604.0054784,
+  "date": "2025-11-27 23:06:44",
+  "config": {
+    "epochs": 100,
+    "lr": 0.0001,
+    "batch_size": 32,
+    "classes": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "\u00f1"
+    ],
+    "language": "es",
+    "type": "recognizer"
+  },
+  "metrics": {
+    "val_loss": 0.31605374813079834,
+    "val_top1": 92.59259033203125,
+    "val_top3": 100.0,
+    "val_top5": 100.0,
+    "train_loss": 0.04161354899406433,
+    "train_top1": 100.0,
+    "train_top3": 100.0,
+    "train_top5": 100.0,
+    "epoch": 99
+  }
+}

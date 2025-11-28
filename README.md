@@ -5,38 +5,38 @@
 ## ✨ Características Principales
 
 ### 🤖 Arquitectura Cognitiva Modular
-El sistema se divide en tres "sentidos" o agentes especializados:
+El sistema se divide en tres "vías" o agentes especializados:
 
-1.  **👂 TinyListener (El Oído)**
-    *   **Modelo**: Wav2Vec 2.0 + LSTM.
+1.  **👂 PhonologicalPathway (El Oído)**
+    *   **Modelo**: MelSpectrogram + Transformer Encoder.
     *   **Función**: Reconocimiento Automático del Habla (ASR).
     *   **Capacidad**: Entiende palabras habladas y las mapea a conceptos.
-    *   **Innovación**: Utiliza embeddings de audio pre-entrenados para aprender con pocos datos.
+    *   **Innovación**: Arquitectura ligera entrenada desde cero para eficiencia.
 
-2.  **👁️ TinyRecognizer (La Vista)**
-    *   **Modelo**: CORnet-Z (Inspired by V1-IT cortex).
+2.  **👁️ VisualPathway (La Vista)**
+    *   **Modelo**: CNN + Linear Decoder.
     *   **Función**: Reconocimiento Óptico de Caracteres (OCR).
     *   **Capacidad**: Lee letras manuscritas y tipografías variadas.
     *   **Innovación**: Simula la vía ventral del procesamiento visual humano.
 
 3.  **🧠 TinyReader (La Voz Interior)**
-    *   **Modelo**: Generativo Top-Down (Encoder-Decoder).
+    *   **Modelo**: Transformer Decoder (Spelling-to-Audio).
     *   **Función**: Imaginación Auditiva.
-    *   **Capacidad**: "Lee" un concepto visual y genera una alucinación auditiva (embedding) de cómo debería sonar.
-    *   **Innovación**: Entrenamiento con **Pérdida Perceptual**, usando al *TinyListener* como juez para validar sus imaginaciones.
+    *   **Capacidad**: "Lee" una secuencia de letras y genera una alucinación auditiva (embedding) de cómo debería sonar.
+    *   **Innovación**: Entrenamiento con **Pérdida Perceptual**, usando al *PhonologicalPathway* como juez para validar sus imaginaciones.
 
 ### 📊 Analítica Avanzada e Interactiva
 Cada modelo cuenta con un panel de control profesional:
 *   **Curvas de Aprendizaje**: Gráficos interactivos de pérdida y precisión en tiempo real (Plotly).
+*   **Predicciones en Vivo**: Visualización animada de lo que el modelo "piensa" mientras entrena.
 *   **Matrices de Confusión**: Mapas de calor para visualizar errores de clasificación.
-*   **Mapas de Probabilidad**: Visualización de confianza del modelo para grandes vocabularios.
-*   **Espacio Latente 3D**: Proyección PCA interactiva para explorar cómo la IA organiza los conceptos en su "cerebro".
+*   **Espacio Latente 3D**: Proyección PCA interactiva para explorar cómo la IA organiza los conceptos.
 
-### 🧪 Laboratorio de Experimentación
-Un entorno sandbox para probar los modelos:
-*   **Grabación en vivo**: Prueba el Listener con tu propio micrófono.
-*   **Lienzo de dibujo**: Dibuja letras para probar el Recognizer.
-*   **Simulación de Imaginación**: Escribe una palabra y observa cómo el Reader la "sueña" y el Listener la interpreta.
+### 🔬 Experimento de Transparencia
+Un módulo dedicado para validar la hipótesis científica del proyecto:
+*   **Entrenamiento Multi-idioma**: Ejecución automatizada de experimentos en Español, Inglés y Francés.
+*   **Evaluación Cruzada**: Comparación de rendimiento entre idiomas y modelos.
+*   **Laboratorio Comparativo**: Prueba interactiva donde escribes una palabra y ves cómo cada "cerebro" (ES/EN/FR) la imagina y pronuncia.
 
 ## 🏗️ Estructura del Proyecto
 
@@ -51,8 +51,9 @@ TinySpeak/
 │   ├── 02_👁️_Visual_Dataset.py  # Gestión de datos visuales
 │   ├── 03_👂_Audio_Analytics.py # Exploración de datos
 │   ├── 05_👂_TinyListener.py    # Entrenamiento y Lab: Listener
-│   ├── 06_👁️_TinyRecognizer.py  # Entrenamiento y Lab: Recognizer
-│   └── 07_👁️👂_TinyReader.py    # Entrenamiento y Lab: Reader
+│   ├── 06_👁️_VisualPathway.py   # Entrenamiento y Lab: Recognizer
+│   ├── 07_👁️👂_TinyReader.py    # Entrenamiento y Lab: Reader
+│   ├── 08_🔬_Transparency_Experiment.py # Experimento Científico Automatizado
 │   └── README.md                # Documentación detallada de páginas
 │
 ├── 📁 components/               # Componentes UI reutilizables

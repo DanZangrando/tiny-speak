@@ -143,6 +143,30 @@ def load_master_config():
     except Exception as e:
         return {}
 
+def get_flattened_samples(config):
+    """
+    Helper para obtener un diccionario aplanado de muestras,
+    manejando tanto estructuras planas como anidadas (por idioma).
+    Retorna: Dict[str, List[Dict]] donde la key es 'palabra' o 'idioma/palabra'
+    """
+    if not config or not config.get('generated_samples'):
+        return {}
+    
+    raw_samples = config['generated_samples']
+    all_samples_flat = {}
+    
+    for key, value in raw_samples.items():
+        if isinstance(value, list):
+            # Estructura plana: key es la palabra
+            all_samples_flat[key] = value
+        elif isinstance(value, dict):
+            # Estructura anidada: key es el idioma
+            for word, variations in value.items():
+                if isinstance(variations, list):
+                    all_samples_flat[f"{key}/{word}"] = variations
+                    
+    return all_samples_flat
+
 def clear_analysis_cache():
     """Limpiar todo el caché de análisis"""
     keys_to_remove = []
@@ -375,26 +399,35 @@ def analyze_dataset_audio_metrics(config):
     if not config or not config.get('generated_samples'):
         return pd.DataFrame()
     
-    samples = config['generated_samples']
+    # Usar helper para obtener muestras aplanadas
+    all_samples_flat = get_flattened_samples(config)
+    
+    if not all_samples_flat:
+        return pd.DataFrame()
+
     all_metrics = []
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    total_samples = sum(len(variaciones) for variaciones in samples.values())
+    total_samples = sum(len(variaciones) for variaciones in all_samples_flat.values())
     processed = 0
     
     repo_root = Path(__file__).parent.parent
     
-    for palabra, variaciones in samples.items():
+    for palabra, variaciones in all_samples_flat.items():
         for i, variacion in enumerate(variaciones):
             # Actualizar progreso
             processed += 1
-            progress = processed / total_samples
-            progress_bar.progress(progress)
+            if total_samples > 0:
+                progress = processed / total_samples
+                progress_bar.progress(min(progress, 1.0))
             status_text.text(f"Analizando: {palabra} - Variación {i+1}/{len(variaciones)} ({processed}/{total_samples})")
             
             # Obtener métricas
+            if not isinstance(variacion, dict):
+                continue
+                
             if 'file_path' in variacion:
                 # Usar ruta del archivo
                 file_path = repo_root / variacion['file_path']
@@ -947,7 +980,7 @@ def mostrar_analisis_dataset():
         
         return
     
-    samples = config['generated_samples']
+    samples = get_flattened_samples(config)
     
     # Información del diccionario configurado
     if master_config and 'diccionario_seleccionado' in master_config:
@@ -1314,7 +1347,7 @@ def mostrar_waveform_analysis():
         st.warning("⚠️ No hay dataset para análizar.")
         return
     
-    samples = config['generated_samples']
+    samples = get_flattened_samples(config)
     
     # Controles de cache
     col_cache1, col_cache2 = st.columns([3, 1])
@@ -1449,7 +1482,7 @@ def main():
         config = load_audio_dataset_config()
         
         if config and config.get('generated_samples'):
-            samples = config['generated_samples']
+            samples = get_flattened_samples(config)
             
             # Selector de múltiples muestras para comparar
             st.markdown("#### 🔍 Seleccionar Muestras para Comparar")

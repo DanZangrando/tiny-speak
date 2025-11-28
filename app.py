@@ -27,7 +27,8 @@ st.set_page_config(
 )
 
 # Importar módulos del proyecto
-from models import TinySpeak, TinyListener, TinyRecognizer
+# Importar módulos del proyecto
+from models import PhonologicalPathway, VisualPathway
 from utils import (
     encontrar_device, load_wav2vec_model, get_default_words, synthesize_word,
     save_waveform_to_audio_file, WAV2VEC_SR, WAV2VEC_DIM
@@ -44,8 +45,98 @@ from components.modern_sidebar import display_modern_sidebar
 # CONFIGURACIÓN Y SETUP
 # =============================================================================
 
+# =============================================================================
+# CONFIGURACIÓN Y SETUP
+# =============================================================================
+
+from training.config import load_master_dataset_config, save_master_dataset_config
+
+def render_experiment_config():
+    """Renderiza la configuración global del experimento en la página principal."""
+    st.markdown("### 🛠️ Configuración del Experimento")
+    st.info("Define aquí los parámetros globales para el experimento de transparencia.")
+    
+    # Cargar configuración actual
+    try:
+        config = load_master_dataset_config()
+    except FileNotFoundError:
+        config = {}
+        
+    exp_config = config.get("experiment_config", {})
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Selector de Idiomas
+        st.markdown("#### 1. Idiomas del Experimento")
+        langs = st.multiselect(
+            "Selecciona los idiomas a comparar:",
+            ['es', 'en', 'fr'],
+            default=exp_config.get('languages', ['es']),
+            format_func=lambda x: {'es': '🇪🇸 Español', 'en': '🇺🇸 English', 'fr': '🇫🇷 Français'}[x]
+        )
+        
+    with col2:
+        # Selector de Diccionario Base
+        st.markdown("#### 2. Diccionario Base")
+        dict_names = get_nombres_diccionarios()
+        current_dict = exp_config.get('base_dictionary', dict_names[0] if dict_names else None)
+        if current_dict not in dict_names and dict_names:
+            current_dict = dict_names[0]
+            
+        base_dict = st.selectbox(
+            "Selecciona el diccionario base:",
+            dict_names,
+            index=dict_names.index(current_dict) if current_dict in dict_names else 0
+        )
+
+    # Validación
+    st.markdown("#### 3. Validación de Recursos")
+    if not langs:
+        st.warning("⚠️ Debes seleccionar al menos un idioma.")
+        return
+
+    all_valid = True
+    status_container = st.container()
+    
+    with status_container:
+        cols = st.columns(len(langs))
+        for i, lang in enumerate(langs):
+            with cols[i]:
+                # Verificar diccionario
+                dic_data = get_diccionario_predefinido(base_dict, idioma=lang)
+                if not dic_data:
+                    st.error(f"❌ {lang.upper()}: Falta diccionario")
+                    all_valid = False
+                else:
+                    words = dic_data['palabras']
+                    st.success(f"✅ {lang.upper()} ({len(words)})")
+                    with st.expander(f"📖 Ver Vocabulario ({lang.upper()})"):
+                        st.write(", ".join(words))
+
+    if st.button("💾 Guardar Configuración Global", type="primary", disabled=not all_valid):
+        new_config = config.copy()
+        new_config["experiment_config"] = {
+            "languages": langs,
+            "base_dictionary": base_dict,
+            "last_updated": datetime.now().isoformat()
+        }
+        # También actualizamos el diccionario seleccionado por defecto para compatibilidad
+        # Cargamos el diccionario base (español por defecto o el primero seleccionado) para el uso general
+        default_lang = langs[0] if 'es' not in langs else 'es'
+        dic_def = get_diccionario_predefinido(base_dict, idioma=default_lang)
+        if dic_def:
+            # Añadir 'tipo' para compatibilidad con código legado
+            dic_def['tipo'] = 'predefinido'
+            new_config["diccionario_seleccionado"] = dic_def
+            
+        save_master_dataset_config(new_config)
+        st.toast("Configuración guardada exitosamente!", icon="🎉")
+        st.rerun()
+
 @st.cache_resource
 def setup_models(autoload: bool = False):
+
     """Inicializa (o prepara) los modelos y configuración del sistema.
 
     Para evitar cargas pesadas en el dashboard principal, por defecto
@@ -64,9 +155,8 @@ def setup_models(autoload: bool = False):
         return {
             'device': device,
             'wav2vec_model': None,
-            'tiny_speak': None,
-            'tiny_listener': None,
-            'tiny_recognizer': None,
+            'phonological_pathway': None,
+            'visual_pathway': None,
             'tiny_speller': None,
             'words': words
         }
@@ -76,21 +166,19 @@ def setup_models(autoload: bool = False):
         wav2vec_model = load_wav2vec_model(device=device)
 
         # Inicializar modelos
-        tiny_speak = TinySpeak(words=words, hidden_dim=64, num_layers=2, wav2vec_dim=WAV2VEC_DIM)
-        tiny_listener = TinyListener(tiny_speak=tiny_speak, wav2vec_model=wav2vec_model)
-        tiny_recognizer = TinyRecognizer(wav2vec_dim=WAV2VEC_DIM)
+        # PhonologicalPathway ya no necesita TinySpeak, es autocontenido
+        phonological_pathway = PhonologicalPathway(num_classes=len(words))
+        visual_pathway = VisualPathway(num_classes=len(words))
 
         # Mover modelos al dispositivo
-        tiny_speak = tiny_speak.to(device)
-        tiny_listener = tiny_listener.to(device)
-        tiny_recognizer = tiny_recognizer.to(device)
+        phonological_pathway = phonological_pathway.to(device)
+        visual_pathway = visual_pathway.to(device)
 
     return {
         'device': device,
         'wav2vec_model': wav2vec_model,
-        'tiny_speak': tiny_speak,
-        'tiny_listener': tiny_listener,
-        'tiny_recognizer': tiny_recognizer,
+        'phonological_pathway': phonological_pathway,
+        'visual_pathway': visual_pathway,
         'words': words
     }
 
@@ -102,164 +190,9 @@ def get_custom_css():
     """Retorna CSS personalizado para el tema moderno"""
     return """
     <style>
-    /* Main header con gradiente */
-    .main-header {
-        background: linear-gradient(90deg, #FF6B6B, #4ECDC4);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 3rem;
-        font-weight: bold;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    
-    /* Modernización completa de la sidebar */
-    .css-1d391kg, .css-1lcbmhc, .css-17eq0hr, section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%) !important;
-    }
-    
-    /* Ocultar elementos por defecto de Streamlit en sidebar */
-    .css-1d391kg .stRadio, .css-1d391kg .stSelectbox {
-        display: none !important;
-    }
-    
-    /* Estilizar todos los elementos de texto en sidebar */
-    section[data-testid="stSidebar"] * {
-        color: rgba(255, 255, 255, 0.9) !important;
-    }
-    
-    /* Estilizar contenedor principal de sidebar */
-    section[data-testid="stSidebar"] > div {
-        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%) !important;
-        padding: 1rem !important;
-    }
-    
-    /* Estilo para elementos de la sidebar */
-    .css-1d391kg .stSelectbox > div > div {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 8px;
-        backdrop-filter: blur(10px);
-    }
-    
-    .css-1d391kg .stButton > button {
-        background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
-        border: none;
-        border-radius: 10px;
-        color: white;
-        font-weight: bold;
-        transition: all 0.3s ease;
-    }
-    
-    .css-1d391kg .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    }
-    
-    /* Cards de modelos */
-    .model-card {
-        background: rgba(255, 107, 107, 0.1);
-        padding: 1.5rem;
-        border-radius: 15px;
-        border: 1px solid rgba(255, 107, 107, 0.3);
-        margin: 1rem 0;
-        backdrop-filter: blur(10px);
-    }
-    
-    /* Container de métricas */
-    .metric-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 0.5rem 0;
-    }
-    
-    /* Mejoras para métricas de Streamlit */
-    .metric-container .metric-value {
-        color: white !important;
-        font-size: 2rem !important;
-        font-weight: bold !important;
-    }
-    
-    /* Estilo para tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background: linear-gradient(45deg, #667eea, #764ba2);
-        border-radius: 10px;
-        color: white;
-        font-weight: bold;
-        border: none;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(45deg, #FF6B6B, #4ECDC4) !important;
-    }
-    
-    /* Estilo para selectboxes y otros widgets */
-    .stSelectbox > div > div {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(102, 126, 234, 0.3);
-        border-radius: 10px;
-        backdrop-filter: blur(10px);
-    }
-    
-    /* Botones principales */
-    .stButton > button {
-        background: linear-gradient(45deg, #667eea, #764ba2);
-        border: none;
-        border-radius: 10px;
-        color: white;
-        font-weight: bold;
-        transition: all 0.3s ease;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .stButton > button:hover {
-        background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
-    }
-    
-    /* Mejoras para progress bars */
-    .stProgress > div > div > div {
-        background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
-    }
-    
-    /* Estilo para expandir */
-    .streamlit-expanderHeader {
-        background: linear-gradient(45deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-        border-radius: 10px;
-        border: 1px solid rgba(102, 126, 234, 0.2);
-    }
-    
-    /* Estilo para info boxes */
-    .stAlert > div {
-        border-radius: 10px;
-        backdrop-filter: blur(10px);
-    }
-    
-    /* Modernización de dataframes */
+    /* Estilos mínimos para contenedores */
     .stDataFrame {
         border-radius: 10px;
-        overflow: hidden;
-        border: 1px solid rgba(102, 126, 234, 0.2);
-    }
-    
-    /* Sidebar moderna - texto */
-    .css-1d391kg .stMarkdown {
-        color: rgba(255, 255, 255, 0.9);
-    }
-    
-    .css-1d391kg .stCaption {
-        color: rgba(255, 255, 255, 0.7);
-    }
-    
-    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 {
-        color: white;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     </style>
     """
@@ -267,8 +200,8 @@ def get_custom_css():
 def create_model_metrics():
     """Crea las métricas simuladas de los modelos"""
     return {
-        'TinyListener': {'params': '~2.1M', 'accuracy': '94.2%', 'delta': '2.1%'},
-        'TinyRecognizer': {'params': '~850K', 'accuracy': '97.8%', 'delta': '1.5%'}
+        'PhonologicalPathway': {'params': '~2.1M', 'accuracy': '94.2%', 'delta': '2.1%'},
+        'VisualPathway': {'params': '~850K', 'accuracy': '97.8%', 'delta': '1.5%'}
     }
 
 def load_dataset_config(config_path):
@@ -313,15 +246,30 @@ def get_palabras_vocabulario_actual():
     """Obtiene las palabras del vocabulario configurado actualmente"""
     master_config = load_dataset_config("master_dataset_config.json")
     if master_config and 'diccionario_seleccionado' in master_config:
-        dic_tipo = master_config['diccionario_seleccionado']['tipo']
-        if dic_tipo == 'predefinido':
-            dic_nombre = master_config['diccionario_seleccionado']['nombre']
-            dic_data = get_diccionario_predefinido(dic_nombre)
-            if dic_data:
-                return dic_data['palabras']
-        elif dic_tipo == 'personalizado':
-            return master_config['diccionario_seleccionado'].get('palabras', [])
-    
+        dic_sel = master_config['diccionario_seleccionado']
+        
+        # Compatibilidad con formato antiguo (tipo/nombre)
+        if 'tipo' in dic_sel:
+            dic_tipo = dic_sel['tipo']
+            if dic_tipo == 'predefinido':
+                dic_nombre = dic_sel['nombre']
+                # Si el nombre tiene formato "Nombre (LANG)", extraer solo el nombre base si es necesario
+                # Pero get_diccionario_predefinido espera la clave (ej: 'animales')
+                # Por ahora intentamos usar el nombre tal cual o buscar en metadatos
+                # Mejor: si ya tiene 'palabras', usarlas directo
+                if 'palabras' in dic_sel and dic_sel['palabras']:
+                    return dic_sel['palabras']
+                    
+                dic_data = get_diccionario_predefinido(dic_nombre)
+                if dic_data:
+                    return dic_data['palabras']
+            elif dic_tipo == 'personalizado':
+                return dic_sel.get('palabras', [])
+        
+        # Nuevo formato (directamente el objeto diccionario)
+        elif 'palabras' in dic_sel:
+            return dic_sel['palabras']
+            
     # Fallback a palabras por defecto
     return get_default_words()
 
@@ -447,7 +395,7 @@ def display_vocabulary_selector():
     
     with col2:
         # Botón de sincronización
-        if st.button("� Sincronizar", type="primary", help="Actualiza el vocabulario activo"):
+        if st.button("🔄 Sincronizar", type="primary", help="Actualiza el vocabulario activo"):
             if diccionario_key:
                 diccionario_data = get_diccionario_predefinido(diccionario_key)
                 
@@ -532,7 +480,28 @@ def display_system_metrics():
     
     # Audio dataset
     if master_config and 'generated_samples' in master_config:
-        total_audio_samples = sum(len(samples) for samples in master_config['generated_samples'].values())
+        total_audio_samples = 0
+        samples_data = master_config['generated_samples']
+        
+        # Detectar estructura (plana vs anidada)
+        is_nested = False
+        if samples_data:
+            first_val = next(iter(samples_data.values()))
+            if isinstance(first_val, dict) and not isinstance(first_val, list):
+                is_nested = True
+        
+        if is_nested:
+            # Estructura anidada: idioma -> palabra -> lista
+            for lang_data in samples_data.values():
+                if isinstance(lang_data, dict):
+                    for word_variations in lang_data.values():
+                        total_audio_samples += len(word_variations)
+        else:
+            # Estructura plana antigua: palabra -> lista
+            for word_variations in samples_data.values():
+                if isinstance(word_variations, list):
+                    total_audio_samples += len(word_variations)
+                    
         audio_status = f"✅ ({total_audio_samples})"
     else:
         audio_status = "⚙️"
@@ -567,12 +536,12 @@ def display_model_cards():
     with col1:
         st.markdown("""
         <div class="model-card">
-        <h4>🎵 TinyListener</h4>
+        <h4>🎵 Phonological Pathway</h4>
         <p><strong>Audio → Palabra</strong></p>
         <ul>
-        <li>🤖 <strong>Base:</strong> Wav2Vec2 (facebook/wav2vec2-base-es-voxpopuli-v2)</li>
-        <li>🧠 <strong>Head:</strong> LSTM (Hidden: 64, Layers: 2)</li>
-        <li>🎯 <strong>Output:</strong> Linear Projection</li>
+        <li>🤖 <strong>Feature Extractor:</strong> Custom CNN</li>
+        <li>🧠 <strong>Encoder:</strong> Transformer (2 Layers)</li>
+        <li>🎯 <strong>Output:</strong> Linear Classification Head</li>
         </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -580,12 +549,12 @@ def display_model_cards():
     with col2:
         st.markdown("""
         <div class="model-card">
-        <h4>🖼️ TinyRecognizer</h4>
+        <h4>🖼️ Visual Pathway</h4>
         <p><strong>Imagen → Letra</strong></p>
         <ul>
-        <li>🧠 <strong>Backbone:</strong> CORnet-Z (V1→V2→V4→IT)</li>
-        <li>🔄 <strong>Decoder:</strong> AvgPool → Flatten → Linear (512→1000)</li>
-        <li>🎯 <strong>Output:</strong> Linear Projection</li>
+        <li>🧠 <strong>Backbone:</strong> Custom CNN (V1→V2→V4→IT)</li>
+        <li>🔄 <strong>Decoder:</strong> AvgPool → Flatten → Linear</li>
+        <li>🎯 <strong>Output:</strong> Linear Classification Head</li>
         </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -1293,12 +1262,13 @@ def main():
     # Header principal
     st.markdown('<h1 class="main-header">🎤 TinySpeak Dashboard</h1>', unsafe_allow_html=True)
     
+    # Renderizar configuración del experimento
+    render_experiment_config()
+    
+    st.markdown("---")
+    
     # Métricas del sistema en tiempo real
     display_system_metrics()
-    
-    # Configuración de vocabulario (nueva sección)
-    st.markdown("---")
-    display_vocabulary_selector()
     
     # Dashboard de modelos
     st.markdown("---")

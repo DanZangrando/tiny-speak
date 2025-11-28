@@ -1,0 +1,11 @@
+{
+  "listener_es": "experiments/models/listener/listener_es_20251127_2305.ckpt",
+  "recognizer_es": "experiments/models/recognizer/recognizer_es_20251127_2306.ckpt",
+  "reader_es": "experiments/models/reader/reader_es_20251127_2311.ckpt",
+  "listener_en": "experiments/models/listener/listener_en_20251127_2311.ckpt",
+  "recognizer_en": "experiments/models/recognizer/recognizer_en_20251127_2312.ckpt",
+  "reader_en": "experiments/models/reader/reader_en_20251127_2316.ckpt",
+  "listener_fr": "experiments/models/listener/listener_fr_20251127_2317.ckpt",
+  "recognizer_fr": "experiments/models/recognizer/recognizer_fr_20251127_2319.ckpt",
+  "reader_fr": "experiments/models/reader/reader_fr_20251127_2323.ckpt"
+}

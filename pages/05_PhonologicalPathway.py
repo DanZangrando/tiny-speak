@@ -1,5 +1,5 @@
 """
-🎵 TinyListener - Entrenamiento y analítica sobre el dataset de audio.
+🎵 Phonological Pathway (TinyListener) - Entrenamiento y analítica sobre el dataset de audio.
 """
 
 import streamlit as st
@@ -12,14 +12,15 @@ from datetime import datetime
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from components.modern_sidebar import display_modern_sidebar
 from components.diagrams import get_listener_diagram
 from components.code_viewer import get_function_source
 from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report, plot_probability_matrix
-from models import TinyListener, TinySpeak
+from models import PhonologicalPathway
 from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
-from training.audio_module import TinyListenerLightning
+from training.audio_module import PhonologicalPathwayLightning
 from training.config import load_master_dataset_config
 from utils import (
     WAV2VEC_DIM,
@@ -28,12 +29,13 @@ from utils import (
     get_default_words,
     load_waveform,
     list_checkpoints,
-    save_model_metadata
+    save_model_metadata,
+    RealTimePlotCallback
 )
 
 # Configurar página
 st.set_page_config(
-    page_title="TinyListener - Audición",
+    page_title="Phonological Pathway - Audición",
     page_icon="👂",
     layout="wide"
 )
@@ -75,7 +77,7 @@ def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     display_modern_sidebar("tiny_listener")
     
-    st.markdown('<h1 class="main-header">👂 TinyListener: Reconocimiento de Voz</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">👂 Phonological Pathway: Reconocimiento de Voz</h1>', unsafe_allow_html=True)
     
     tabs = st.tabs(["📐 Arquitectura", "🏃‍♂️ Entrenamiento", "💾 Modelos Guardados", "🧪 Laboratorio"])
 
@@ -83,22 +85,31 @@ def main():
     # TAB 1: ARQUITECTURA
     # ==========================================
     with tabs[0]:
-        st.markdown("### 👂 Wav2Vec 2.0 + TinySpeak")
+        st.markdown("### 👂 Phonological Pathway (Vía Fonológica)")
         
         st.markdown("""
         <div class="card">
             <b>Tarea:</b> Reconocimiento de palabras habladas (ASR).<br>
             <b>Input:</b> Forma de onda de audio (Batch, Samples).<br>
             <b>Output:</b> Logits (Batch, NumClasses).<br>
-            <b>Justificación:</b> Utilizamos <b>Wav2Vec 2.0</b> (pre-entrenado y congelado) como extractor de características auditivas robustas, simulando un sistema auditivo maduro. 
-            Sobre él, entrenamos <b>TinySpeak</b> (una LSTM ligera) que aprende a asociar esas características con conceptos (palabras), imitando el aprendizaje del lenguaje.
+            <b>Arquitectura:</b> Modelo entrenado desde cero que combina:
+            <ul>
+                <li><b>Feature Extractor (CNN):</b> Convierte el audio raw en características latentes.</li>
+                <li><b>Context Encoder (Transformer):</b> Procesa dependencias temporales.</li>
+                <li><b>Classifier:</b> Predice la palabra.</li>
+            </ul>
+            <b>Justificación:</b>
+            <ul>
+                <li><b>Mel-Spectrogram:</b> Simula la cóclea del oído interno, descomponiendo el sonido en frecuencias logarítmicas, similar a la percepción humana.</li>
+                <li><b>CNN & Transformer:</b> La CNN procesa características locales (timbre) mientras que el Transformer integra la secuencia temporal, permitiendo distinguir palabras con los mismos fonemas en diferente orden (ej. "casa" vs "saca").</li>
+            </ul>
         </div>
         """, unsafe_allow_html=True)
         
         st.graphviz_chart(get_listener_diagram())
         
         with st.expander("💻 Ver Código del Modelo (models.py)"):
-            st.code(get_function_source(TinyListener), language="python")
+            st.code(get_function_source(PhonologicalPathway), language="python")
 
     # ==========================================
     # TAB 2: ENTRENAMIENTO
@@ -109,7 +120,7 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Hiperparámetros")
-            epochs = st.number_input("Épocas", 1, 100, 20)
+            epochs = st.number_input("Épocas", min_value=1, value=20)
             lr = st.number_input("Learning Rate", value=1e-3, format="%.1e")
             batch_size = st.selectbox("Batch Size", [4, 8, 16, 32], index=2)
             
@@ -117,17 +128,24 @@ def main():
             st.markdown("#### Callbacks & Optimizador")
             st.info("⚡ Gestión automática con PyTorch Lightning.")
             st.markdown("- **ModelCheckpoint**: Guarda el mejor modelo (val_loss).")
-            st.markdown("- **EarlyStopping**: Detiene si no mejora en 5 épocas.")
+            st.markdown("- **EarlyStopping**: Detiene si no mejora.")
+            
+            patience = st.slider("Patience (Early Stopping)", 1, 20, 10, help="Número de épocas sin mejora antes de detener.")
+            min_delta = st.slider("Min Delta (Early Stopping)", 0.0, 0.1, 0.00, step=0.001, format="%.3f", help="Mejora mínima para considerar.")
+            
+        # Selector de Idioma
+        config = load_master_dataset_config()
+        exp_config = config.get('experiment_config', {})
+        available_langs = exp_config.get('languages', ['es'])
+        
+        target_lang = st.selectbox("Idioma de Entrenamiento", available_langs, index=0)
             
         if st.button("🚀 Iniciar Entrenamiento", type="primary"):
-            run_training(epochs, lr, batch_size)
+            run_training(epochs, lr, batch_size, patience, min_delta, target_lang)
             
         with st.expander("💻 Ver Código de Entrenamiento (LightningModule)"):
-            st.code(get_function_source(TinyListenerLightning), language="python")
+            st.code(get_function_source(PhonologicalPathwayLightning), language="python")
 
-    # ==========================================
-    # TAB 3: MODELOS GUARDADOS
-    # ==========================================
     # ==========================================
     # TAB 3: MODELOS GUARDADOS
     # ==========================================
@@ -188,27 +206,70 @@ def main():
             if st.button("🚀 Ejecutar Evaluación Completa", key=f"eval_{sel_ckpt['filename']}"):
                 with st.spinner("Cargando modelo y datos..."):
                     try:
-                        # Cargar Vocab
+                        # 1. Cargar Metadata (Vocabulario y Idioma)
                         meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
                         words = []
+                        target_lang = None
+                        
                         if meta_path.exists():
                             with open(meta_path) as f:
-                                words = json.load(f).get("config", {}).get("vocab", [])
-                        if not words:
+                                meta_config = json.load(f).get("config", {})
+                                words = meta_config.get("vocab", [])
+                                target_lang = meta_config.get("language")
+                        
+                        # Fallback legacy
+                        if not target_lang:
+                            for lang in ['es', 'en', 'fr']:
+                                if f"_{lang}_" in sel_ckpt['filename']:
+                                    target_lang = lang
+                                    break
+                        
+                        if not target_lang:
                             config = load_master_dataset_config()
-                            words = config.get("diccionario_seleccionado", {}).get("palabras", [])
-                            
-                        # Cargar Modelo
-                        model = TinyListenerLightning.load_from_checkpoint(sel_ckpt['path'], class_names=words)
+                            target_lang = config.get('experiment_config', {}).get('languages', ['es'])[0]
+                            st.warning(f"⚠️ Idioma no detectado en metadata. Usando '{target_lang}' por defecto.")
+
+                        if not words and target_lang:
+                             try:
+                                 with st.spinner(f"Cargando vocabulario para {target_lang}..."):
+                                     train_ds, _, _, _ = build_audio_dataloaders(target_language=target_lang)
+                                     words = train_ds.class_names
+                             except Exception as e:
+                                 st.warning(f"No se pudo cargar vocabulario del dataset: {e}")
+                        
+                        if not words:
+                            st.error("❌ No se pudo determinar el vocabulario (class_names) para cargar el modelo.")
+                            st.stop()
+
+                        # 2. Cargar Modelo
+                        model = PhonologicalPathwayLightning.load_from_checkpoint(sel_ckpt['path'], class_names=words)
                         model.eval()
                         device = encontrar_device()
                         model.to(device)
                         
-                        # Cargar Datos
-                        _, _, _, loaders = build_audio_dataloaders(batch_size=16, num_workers=0, seed=42)
+                        # Verificar consistencia
+                        num_classes_model = model.model.classifier.out_features
+                        if words and len(words) != num_classes_model:
+                            st.warning(f"⚠️ Mismatch: Metadata tiene {len(words)} palabras, pero el modelo espera {num_classes_model}. Ignorando metadata.")
+                            words = []
+                            
+                        if not words:
+                            words = [f"Class {i}" for i in range(num_classes_model)]
+                            st.info(f"Usando etiquetas genéricas para {num_classes_model} clases.")
+
+                        model.class_names = words
+
+                        # 3. Cargar Datos
+                        st.info(f"Cargando datos de validación para idioma: {target_lang}")
+                        _, _, _, loaders = build_audio_dataloaders(
+                            batch_size=16, 
+                            num_workers=0, 
+                            seed=42, 
+                            target_language=target_lang
+                        )
                         val_loader = loaders['val']
                         
-                        # Inferencia
+                        # 4. Inferencia
                         all_preds = []
                         all_probs = []
                         all_labels = []
@@ -217,8 +278,6 @@ def main():
                         
                         with torch.no_grad():
                             for idx, batch in enumerate(val_loader):
-                                # TinyListenerLightning espera waveforms como lista en batch['waveforms']
-                                # Pero el dataloader devuelve batch['waveforms'] como lista de tensores
                                 waveforms = [w.to(device) for w in batch['waveforms']]
                                 labels = batch['label'].to(device)
                                 
@@ -233,15 +292,15 @@ def main():
                                 
                         st.success("Evaluación completada.")
                         
-                        # Visualizar
+                        # 5. Visualizar
                         st.markdown("#### Mapa de Calor de Probabilidades")
-                        display_labels = words if len(words) == len(model.class_names) else [str(i) for i in range(len(model.class_names))]
-                        
-                        # Usar el nuevo heatmap de probabilidades
-                        plot_probability_matrix(all_labels, all_probs, display_labels)
-                        
-                        # Reporte clásico
-                        display_classification_report(all_labels, all_preds, display_labels)
+                        display_labels = words
+                        max_label = max(all_labels) if all_labels else 0
+                        if max_label >= len(display_labels):
+                            st.error(f"❌ Error: El dataset contiene etiquetas ({max_label}) fuera del rango del modelo ({len(display_labels)-1}).")
+                        else:
+                            plot_probability_matrix(all_labels, all_probs, display_labels)
+                            display_classification_report(all_labels, all_preds, display_labels)
                         
                     except Exception as e:
                         st.error(f"Error durante la evaluación: {e}")
@@ -254,30 +313,64 @@ def main():
         st.markdown("### 🧪 Prueba Interactiva")
         run_laboratory()
 
-def run_training(epochs, lr, batch_size):
+def run_training(epochs, lr, batch_size, patience, min_delta, target_language):
     config = load_master_dataset_config()
-    words = config.get("diccionario_seleccionado", {}).get("palabras", [])
     
-    if not words:
-        st.error("No hay palabras en el diccionario.")
-        return
-
-    with st.spinner("Cargando datos..."):
+    with st.spinner(f"Cargando datos para idioma '{target_language}'..."):
         train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
-            batch_size=batch_size, num_workers=0, seed=42
+            batch_size=batch_size, 
+            num_workers=0, 
+            seed=42,
+            target_language=target_language
         )
         
-    model = TinyListenerLightning(
+    words = train_ds.class_names
+    
+    if not words:
+        st.error(f"No hay palabras en el dataset para el idioma {target_language}.")
+        return
+        
+    model = PhonologicalPathwayLightning(
         class_names=words,
         learning_rate=lr
     )
     
+    # Callbacks
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss",
+        min_delta=min_delta,
+        patience=patience,
+        verbose=True,
+        mode="min"
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="models/listener_checkpoints",
+        filename="listener-{epoch:02d}-{val_loss:.2f}",
+        save_top_k=1,
+        monitor="val_loss",
+        mode="min"
+    )
+    
     history_cb = ListenerHistoryCallback()
+    
+    # Placeholders para gráficas en tiempo real
+    st.markdown("### 📈 Progreso en Tiempo Real")
+    col_plot1, col_plot2 = st.columns(2)
+    with col_plot1:
+        st.markdown("#### Pérdida (Loss)")
+        plot_loss = st.empty()
+    with col_plot2:
+        st.markdown("#### Precisión (Accuracy)")
+        plot_acc = st.empty()
+        
+    realtime_cb = RealTimePlotCallback(plot_loss, plot_acc)
+
     trainer = pl.Trainer(
         max_epochs=epochs,
         accelerator="auto",
         devices=1,
-        callbacks=[history_cb],
+        callbacks=[history_cb, realtime_cb, early_stop_callback, checkpoint_callback],
         enable_progress_bar=True,
         default_root_dir="lightning_logs/tiny_listener"
     )
@@ -288,18 +381,31 @@ def run_training(epochs, lr, batch_size):
         
     st.success("Entrenamiento completado!")
     
-    save_dir = Path("models/listener")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    final_path = save_dir / f"listener_{timestamp}.ckpt"
-    trainer.save_checkpoint(final_path)
+    # Guardar el mejor modelo
+    best_model_path = checkpoint_callback.best_model_path
+    if not best_model_path:
+        st.warning("No se encontró un checkpoint del mejor modelo. Usando el estado final.")
+        save_dir = Path("models/listener")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        final_path = save_dir / f"listener_{target_language}_{timestamp}.ckpt"
+        trainer.save_checkpoint(final_path)
+    else:
+        import shutil
+        save_dir = Path("models/listener")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        final_path = save_dir / f"listener_{target_language}_{timestamp}.ckpt"
+        shutil.copy(best_model_path, final_path)
+        st.info(f"Mejor modelo restaurado desde: {Path(best_model_path).name}")
     
-    # Guardar vocabulario en metadata para el laboratorio
+    # Guardar vocabulario en metadata
     meta_config = {
         "epochs": epochs, 
         "lr": lr, 
         "batch_size": batch_size,
-        "vocab": words # Guardar palabras entrenadas
+        "vocab": words,
+        "language": target_language
     }
     final_metrics = history_cb.history[-1] if history_cb.history else {}
     save_model_metadata(final_path, meta_config, final_metrics)
@@ -326,7 +432,6 @@ def run_laboratory():
     sel_ckpt_name = st.selectbox("Seleccionar Modelo", list(ckpt_opts.keys()))
     sel_ckpt_path = ckpt_opts[sel_ckpt_name]
     
-    # Intentar cargar vocabulario desde metadata
     meta_path = Path(sel_ckpt_path).with_suffix(".ckpt.meta.json")
     words = []
     if meta_path.exists():
@@ -337,26 +442,23 @@ def run_laboratory():
         except:
             pass
             
-    # Fallback al config global si no hay metadata
     if not words:
         st.warning("⚠️ No se encontró vocabulario en metadata. Usando configuración global (puede haber mismatch).")
         config = load_master_dataset_config()
         words = config.get("diccionario_seleccionado", {}).get("palabras", [])
     
     if st.button("Cargar Modelo"):
-        st.session_state['listener_model'] = TinyListenerLightning.load_from_checkpoint(
+        st.session_state['listener_model'] = PhonologicalPathwayLightning.load_from_checkpoint(
             sel_ckpt_path, class_names=words
         )
         st.session_state['listener_model'].eval()
-        st.session_state['listener_vocab'] = words # Guardar vocabulario en sesión
+        st.session_state['listener_vocab'] = words
         st.success(f"Modelo cargado con {len(words)} palabras!")
         
     if 'listener_model' in st.session_state:
         model_vocab = st.session_state.get('listener_vocab', words)
         
-        # Seleccionar audio del dataset
         audio_dir = Path("data/audios")
-        # Buscar audios recursivamente
         audios = list(audio_dir.glob("**/*.wav"))
         
         if not audios:
@@ -370,12 +472,14 @@ def run_laboratory():
             waveform = load_waveform(sel_audio_path)
             
             with torch.no_grad():
-                # Forward pass
+                # Asegurar que el input esté en el mismo dispositivo que el modelo
+                device = next(st.session_state['listener_model'].parameters()).device
+                waveform = waveform.to(device)
+                
                 waveform = waveform.unsqueeze(0)
                 logits = st.session_state['listener_model'](waveform)
                 probs = torch.softmax(logits, dim=1)
                 
-            # Visualización Mejorada
             st.markdown("### 📊 Resultados del Análisis")
             
             col_res1, col_res2 = st.columns([1, 2])
@@ -392,7 +496,7 @@ def run_laboratory():
                 st.markdown("**Distribución de Probabilidad**")
                 df_probs = pd.DataFrame({
                     "Palabra": model_vocab,
-                    "Probabilidad": probs[0].numpy()
+                    "Probabilidad": probs[0].cpu().numpy()
                 })
                 st.bar_chart(df_probs.set_index("Palabra"))
 

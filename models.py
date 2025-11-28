@@ -9,234 +9,211 @@ from transformers import Wav2Vec2Model, Wav2Vec2Config
 from collections import OrderedDict
 import torch.nn as nn
 
-class Flatten(nn.Module):
-    """Helper module for flattening input tensor to 1-D for the use in Linear modules"""
-    def forward(self, x):
-        return x.view(x.size(0), -1)
+# ==========================================
+# CUSTOM TINY LISTENER (Mini-Wav2Vec2)
+# ==========================================
 
-class Identity(nn.Module):
-    """Helper module that stores the current tensor. Useful for accessing by name"""
-    def forward(self, x):
-        return x
+import math
 
-class CORblock_Z(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
-                              stride=stride, padding=kernel_size // 2)
-        self.nonlin = nn.ReLU(inplace=True)
-        self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.output = Identity()  # for an easy access to this block's output
+        self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, inp):
-        x = self.conv(inp)
-        x = self.nonlin(x)
-        x = self.pool(x)
-        x = self.output(x)  # for an easy access to this block's output
-        return x
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
 
-def CORnet_Z(pretrained=False):
-    """CORnet-Z architecture with optional pretrained weights."""
-    model = nn.Sequential(OrderedDict([
-        ('V1', CORblock_Z(3, 64, kernel_size=7, stride=2)),
-        ('V2', CORblock_Z(64, 128)),
-        ('V4', CORblock_Z(128, 256)),
-        ('IT', CORblock_Z(256, 512)),
-        ('decoder', nn.Sequential(OrderedDict([
-            ('avgpool', nn.AdaptiveAvgPool2d(1)),
-            ('flatten', Flatten()),
-            ('linear', nn.Linear(512, 1000)),
-            ('output', Identity())
-        ])))
-    ]))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        # El Transformer espera [Batch, SeqLen, Dim] si batch_first=True
+        # Nuestra implementación usa batch_first=True en el encoder layer
+        # Pero la implementación estándar de PE suele esperar [SeqLen, Batch, Dim]
+        # Ajustamos para soportar batch_first=True
+        
+        # x: [Batch, SeqLen, Dim]
+        x = x + self.pe[:x.size(1)].transpose(0, 1)
+        return self.dropout(x)
 
-    if pretrained:
-        # ✅ NUEVA FUNCIONALIDAD: Cargar pesos preentrenados de CORnet-Z
-        try:
-            import torch.hub
-            # Intentar cargar desde torch hub (si disponible)
-            # Fallback: usar inicialización mejorada He para ReLU
-            print("⚠️ Pesos preentrenados de CORnet-Z no disponibles, usando inicialización He")
-            _initialize_cornet_weights(model)
-        except Exception as e:
-            print(f"⚠️ Error cargando pesos preentrenados: {e}")
-            _initialize_cornet_weights(model)
-    else:
-        # Inicialización estándar (mejorada)
-        _initialize_cornet_weights(model)
-
-    return model
-
-
-def _initialize_cornet_weights(model):
-    """Inicialización mejorada para CORnet-Z - más apropiada para ReLU."""
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            # He initialization para ReLU
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.Linear):
-            # Xavier para capas lineales
-            nn.init.xavier_normal_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.BatchNorm2d):
-            m.weight.data.fill_(1)
-            m.bias.data.zero_()
-
-class TinySpeak(Module):
+class PhonologicalPathway(nn.Module):
+    """
+    Arquitectura personalizada "PhonologicalPathway" entrenada desde cero.
+    Combina:
+    1. MelSpectrogram: Convierte waveform -> Time-Frequency representation.
+    2. Feature Extractor (CNN): Procesa el espectrograma.
+    3. Positional Encoding: Añade información temporal.
+    4. Context Encoder (Transformer): Procesa dependencias temporales.
+    5. Classifier Head: Predice la palabra.
+    """
     def __init__(
-        self,
-        words: list | None = None,
-        *,
-        num_classes: int | None = None,
-        hidden_dim: int = 128,
-        num_layers: int = 2,
-        wav2vec_dim: int = 768,
+        self, 
+        num_classes: int,
+        hidden_dim: int = 256, 
+        num_conv_layers: int = 3,
+        num_transformer_layers: int = 2,
+        nhead: int = 4,
+        sample_rate: int = 16000,
+        n_mels: int = 80
     ):
         super().__init__()
-        if words is None and num_classes is None:
-            raise ValueError("TinySpeak requiere una lista de palabras o num_classes explícito.")
-
-        self.words = words or []
         self.hidden_dim = hidden_dim
-        self.lstm = LSTM(
-            input_size=wav2vec_dim,
-            hidden_size=hidden_dim,
-            num_layers=num_layers,
-            batch_first=True
-        )
+        
+        # 0. Audio Transform (Waveform -> MelSpectrogram)
+        # Usamos torchaudio para calcular el espectrograma en la GPU
+        try:
+            import torchaudio
+            self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sample_rate,
+                n_mels=n_mels,
+                n_fft=400,
+                hop_length=160
+            )
+        except ImportError:
+            raise ImportError("torchaudio es necesario para PhonologicalPathway. Instálalo con pip install torchaudio")
 
-        n_outputs = num_classes if num_classes is not None else len(self.words)
-        if n_outputs <= 0:
-            raise ValueError("TinySpeak necesita al menos una clase de salida.")
+        # 1. Feature Extractor (CNN 1D)
+        # Entrada: (B, n_mels, T_spec) -> Salida: (B, hidden_dim, T')
+        # Tratamos las bandas de frecuencia (n_mels) como canales de entrada
+        layers = []
+        in_channels = n_mels
+        
+        for i in range(num_conv_layers):
+            out_channels = hidden_dim if i == num_conv_layers - 1 else 64 * (2**i)
+            # Kernel size más pequeño y stride menor porque el espectrograma ya está "comprimido" temporalmente
+            layers.append(nn.Conv1d(in_channels, out_channels, kernel_size=5, stride=2, padding=2))
+            layers.append(nn.GroupNorm(out_channels // 8 if out_channels > 8 else 1, out_channels))
+            layers.append(nn.GELU())
+            in_channels = out_channels
+            
+        self.feature_extractor = nn.Sequential(*layers)
+        
+        # Proyección para asegurar dimensión correcta para Transformer
+        self.post_extract_proj = nn.Linear(in_channels, hidden_dim)
 
-        self.classifier = Linear(hidden_dim, n_outputs)
+        # 2. Positional Encoding
+        self.pos_encoder = PositionalEncoding(hidden_dim, dropout=0.1)
 
-    def update_vocabulary(self, words: list[str]) -> None:
-        """Actualizar dinámicamente el vocabulario y la capa de salida."""
-        self.words = words
-        device = next(self.parameters()).device
-        self.classifier = Linear(self.hidden_dim, len(words)).to(device)
+        # 3. Context Encoder (Transformer)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=nhead, dim_feedforward=hidden_dim*4, batch_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_transformer_layers)
+        
+        # 4. Classifier
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+        
+        # Para compatibilidad con Reader (target layer)
+        self.target_layer = num_transformer_layers - 1
 
-    def forward(self, packed_sequence: PackedSequence):
-        _, (h_n, _) = self.lstm(packed_sequence)
-        logits = self.classifier(h_n[-1])
-        return logits, h_n
-
-class TinyListener(Module):
-    def __init__(self, tiny_speak: TinySpeak, wav2vec_model, wav2vec_target_layer=5):
-        super().__init__()
-        self.tiny_speak = tiny_speak
-        self.wav2vec_model = wav2vec_model
-        self.wav2vec_target_layer = wav2vec_target_layer
+    def extract_features(self, waveforms):
+        # waveforms: (B, T)
+        
+        # 0. Mel Spectrogram
+        # (B, T) -> (B, n_mels, T_spec)
+        x = self.mel_spectrogram(waveforms)
+        
+        # Log-Mel Spectrogram (estabilidad numérica y mejor rango dinámico)
+        x = torch.log(x + 1e-9)
+        
+        # 1. CNN Feature Extractor
+        # Entrada: (B, n_mels, T_spec)
+        features = self.feature_extractor(x) # (B, C, T')
+        
+        return features.transpose(1, 2) # (B, T', C)
 
     def extract_hidden_activations(self, waveforms):
-        B = len(waveforms)
-        padded = pad_sequence(waveforms, batch_first=True).to(waveforms[0].device)
-        lengths = torch.tensor([w.size(0) for w in waveforms], device=waveforms[0].device)
-        arange = torch.arange(padded.size(1), device=waveforms[0].device)
-        mask = (arange.unsqueeze(0) < lengths.unsqueeze(1)).long()
+        """
+        Interfaz requerida por TinyReader.
+        Retorna los hidden states del Transformer.
+        """
+        features = self.extract_features(waveforms)
+        features = self.post_extract_proj(features)
         
-        self.wav2vec_model.eval()
-        with torch.no_grad():
-            out = self.wav2vec_model(padded, attention_mask=mask)
-        return torch.stack(out.hidden_states, dim=0)
+        # Add Positional Encoding
+        features = self.pos_encoder(features)
+        
+        # Transformer espera (B, T, D)
+        encoded = self.transformer(features)
+        
+        # Reader espera (Layers, B, T, D). Hacemos fake stack
+        return encoded.unsqueeze(0) 
 
     def mask_hidden_activations(self, hidden_activations):
-        hidden = hidden_activations[self.wav2vec_target_layer]  # → (B, T_hidden, D)
-        B, T_hidden, D = hidden.shape
-        device = hidden.device
-        lengths = torch.full((B,), T_hidden, dtype=torch.long, device=device)
+        # hidden_activations: (1, B, T, D) -> Tomamos el único layer
+        hidden = hidden_activations[0] 
+        B, T, D = hidden.shape
+        lengths = torch.full((B,), T, dtype=torch.long, device=hidden.device)
         return hidden.unsqueeze(0), lengths
 
-    def downsample_hidden_activations(self, hidden_activations, lengths, factor=7):
-        B, L, N, D = hidden_activations.shape
-        N_target = N // factor
-        hidden_activations = hidden_activations.reshape(B * L, N, D).transpose(1, 2)
-        hidden_activations = F.interpolate(hidden_activations, size=N_target, mode="linear", align_corners=False)
-        hidden_activations = hidden_activations.transpose(1, 2).reshape(B, L, N_target, D)
-        lengths = torch.div(lengths, factor, rounding_mode='floor')
+    def downsample_hidden_activations(self, hidden_activations, lengths, factor=1):
+        # No necesitamos downsample extra si la CNN ya redujo bastante
         return hidden_activations, lengths
 
-    def forward(self, waveform):
-        """
-        waveform: FloatTensor of shape (B, T_max, input_dim) or list of tensors
-        """
-        if isinstance(waveform, torch.Tensor):
-            waveforms = [waveform[i] for i in range(waveform.size(0))]
-        else:
-            waveforms = waveform
-            
-        hidden_activations = self.extract_hidden_activations(waveforms)
-        hidden_activations, lengths = self.mask_hidden_activations(hidden_activations)
-        hidden_activations, lengths = self.downsample_hidden_activations(hidden_activations, lengths, factor=7)
-        hidden_activations = hidden_activations.squeeze(0)
+    def forward(self, waveforms):
+        # 1. Features (incluye MelSpectrogram)
+        features = self.extract_features(waveforms) # (B, T', C)
+        features = self.post_extract_proj(features) # (B, T', D)
         
-        # Pack the padded batch
-        packed = pack_padded_sequence(
-            hidden_activations, lengths.cpu(), batch_first=True, enforce_sorted=False
-        )
-        logits, hidden_states = self.tiny_speak(packed)
-        return logits, hidden_states  # ✅ MANTENER: Retornar ambos para compatibilidad
+        # 2. Positional Encoding
+        features = self.pos_encoder(features)
+        
+        # 3. Transformer
+        encoded = self.transformer(features) # (B, T', D)
+        
+        # 4. Classification (Mean Pooling)
+        pooled = encoded.mean(dim=1) # (B, D)
+        logits = self.classifier(pooled)
+        
+        return logits, encoded
 
-class TinyRecognizer(Module):
-    def __init__(self, wav2vec_dim=768, num_classes=26, pretrained_backbone=True, use_embeddings=False):
+
+# ==========================================
+# VISUAL PATHWAY (formerly TinyRecognizer)
+# ==========================================
+
+class VisualPathway(nn.Module):
+    """
+    Arquitectura personalizada "VisualPathway" (antes TinyRecognizer).
+    Inspirada en CORnet-Z pero simplificada.
+    """
+    def __init__(self, num_classes: int, hidden_dim: int = 512):
         super().__init__()
-        # ✅ MEJORA CRÍTICA: Usar backbone preentrenado (o inicialización He mejorada)
-        self.cornet = CORnet_Z(pretrained=pretrained_backbone)
-        self.use_embeddings = use_embeddings
         
-        if use_embeddings:
-            # ✅ MODO EMBEDDINGS: Para TinySpeller - mantiene arquitectura original
-            new_decoder = Sequential(OrderedDict([
-                ('avgpool', AdaptiveAvgPool2d((1, 1))),
-                ('flatten', Flatten()),
-                ('linear_input', Linear(512, 1024)),
-                ('relu', ReLU()),
-                ('linear_output', Linear(1024, wav2vec_dim)),
-            ]))
-            self.classifier = Linear(wav2vec_dim, num_classes)
-        else:
-            # ✅ MODO DIRECTO: Para entrenamiento standalone - arquitectura simplificada
-            new_decoder = Sequential(OrderedDict([
-                ('avgpool', AdaptiveAvgPool2d((1, 1))),
-                ('flatten', Flatten()),
-                ('output', Linear(512, num_classes))  # Directo 512→26 clases
-            ]))
-            self.classifier = None
+        def conv_block(in_c, out_c, k=3, s=1, p=1):
+            return nn.Sequential(
+                nn.Conv2d(in_c, out_c, k, s, p),
+                nn.BatchNorm2d(out_c),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2)
+            )
+            
+        self.features = nn.Sequential(
+            conv_block(3, 64),    # 64 -> 32
+            conv_block(64, 128),  # 32 -> 16
+            conv_block(128, 256), # 16 -> 8
+            conv_block(256, hidden_dim), # 8 -> 4
+        )
         
-        # ✅ CORRECCIÓN: Reemplazar correctamente el módulo en nn.Sequential
-        self.cornet._modules['decoder'] = new_decoder
-        
-        if num_classes <= 0:
-            raise ValueError("TinyRecognizer necesita al menos una clase de salida.")
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+        self.hidden_dim = hidden_dim
 
     def update_num_classes(self, num_classes: int) -> None:
-        if num_classes <= 0:
-            raise ValueError("TinyRecognizer necesita al menos una clase.")
         device = next(self.parameters()).device
-        
-        if self.use_embeddings:
-            # Actualizar el clasificador separado
-            in_features = self.classifier.in_features
-            self.classifier = Linear(in_features, num_classes).to(device)
-        else:
-            # Actualizar el último layer del decoder
-            # Acceder via _modules porque cornet es Sequential
-            self.cornet._modules['decoder']._modules['output'] = Linear(512, num_classes).to(device)
+        self.classifier = nn.Linear(self.hidden_dim, num_classes).to(device)
 
     def forward(self, x):
-        if self.use_embeddings:
-            # ✅ MODO EMBEDDINGS: Retorna embeddings + logits (para TinySpeller)
-            embeddings = self.cornet(x)
-            logits = self.classifier(embeddings)
-            return logits, embeddings
-        else:
-            # ✅ MODO DIRECTO: Solo logits (para entrenamiento standalone)
-            logits = self.cornet(x)
-            return logits, logits  # Retornar logits duplicados para compatibilidad
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        logits = self.classifier(x)
+        
+        # Retornamos logits, embeddings (x) para compatibilidad con Reader
+        return logits, x
 
 
 
@@ -246,30 +223,34 @@ class TinyRecognizer(Module):
 
 class TinyReader(Module):
     """
-    Modelo Generativo (Top-Down): Concepto (Logits) -> Imaginación Auditiva (Wav2Vec2 Embeddings).
+    Modelo Generativo (Top-Down): Secuencia de Letras (Logits) -> Imaginación Auditiva (Wav2Vec2 Embeddings).
+    Arquitectura Seq2Seq: Encoder (Lee letras) -> Decoder (Imagina audio).
     """
     def __init__(
         self, 
-        num_classes: int, 
+        input_dim: int, # Dimensión de los logits de entrada (ej. 26 letras)
         hidden_dim: int = 256, 
         wav2vec_dim: int = 768, 
         num_layers: int = 2
     ):
         super().__init__()
-        self.num_classes = num_classes
+        self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.wav2vec_dim = wav2vec_dim
         
-        # Encoder: Proyecta el concepto (logits) al espacio latente del LSTM
-        self.concept_encoder = nn.Sequential(
-            nn.Linear(num_classes, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+        # Encoder: Procesa la secuencia de logits de las letras
+        # Input: (B, L_text, input_dim)
+        self.encoder = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=1, # Encoder simple
+            batch_first=True
         )
         
-        # Decoder: Genera la secuencia temporal
-        self.lstm = nn.LSTM(
-            input_size=hidden_dim, # Entrada en cada paso (el concepto repetido)
+        # Decoder: Genera la secuencia temporal de audio
+        # Input: (B, L_audio, hidden_dim) - Inicializado con el estado del encoder
+        self.decoder = nn.LSTM(
+            input_size=hidden_dim, # Entrada en cada paso (contexto del encoder repetido o autoregresivo)
             hidden_size=hidden_dim,
             num_layers=num_layers,
             batch_first=True
@@ -278,33 +259,45 @@ class TinyReader(Module):
         # Proyección de salida: Latente -> Embedding Wav2Vec2
         self.output_projection = nn.Linear(hidden_dim, wav2vec_dim)
 
-    def forward(self, logits, target_length=None):
+    def forward(self, x_seq, target_length=None):
         """
-        logits: (B, num_classes) - El "concepto" o predicción de TinyListener
-        target_length: int - Longitud de la secuencia a generar. 
-                       Si es None, se debe especificar (por ahora fijo o pasado externamente).
+        x_seq: (B, L_text, input_dim) - Secuencia de logits de letras (del TinyRecognizer)
+        target_length: int - Longitud de la secuencia de audio a generar.
         """
-        B = logits.size(0)
+        B = x_seq.size(0)
         
-        # 1. Codificar el concepto
-        # (B, num_classes) -> (B, hidden_dim)
-        concept_embedding = self.concept_encoder(logits)
+        # 1. Encoder (Leer el texto)
+        # encoder_out: (B, L_text, hidden_dim)
+        # (h_n, c_n): Estado final del encoder -> Contexto para el decoder
+        _, (h_n, c_n) = self.encoder(x_seq)
         
-        # 2. Preparar entrada para el LSTM
-        # Repetimos el concepto para cada paso de tiempo (como un "bias" constante de qué estamos imaginando)
-        # Si no se da length, asumimos un default (ej. 100 frames ~ 2 segundos) o el del batch
+        # Usamos el último estado oculto como representación del concepto global
+        # h_n: (num_layers, B, hidden_dim). Tomamos el último layer si num_layers > 1
+        context_vector = h_n[-1] # (B, hidden_dim)
+        
+        # 2. Preparar entrada para el Decoder (Imaginación)
+        # Repetimos el contexto para cada paso de tiempo (como un "bias" constante)
         if target_length is None:
             target_length = 100 
             
-        # (B, 1, hidden_dim) -> (B, L, hidden_dim)
-        lstm_input = concept_embedding.unsqueeze(1).expand(-1, target_length, -1)
+        # (B, 1, hidden_dim) -> (B, L_audio, hidden_dim)
+        decoder_input = context_vector.unsqueeze(1).expand(-1, target_length, -1)
         
-        # 3. Generar secuencia
-        # output: (B, L, hidden_dim)
-        lstm_out, _ = self.lstm(lstm_input)
+        # 3. Decoder (Generar audio)
+        # Pasamos el estado del encoder como estado inicial del decoder?
+        # Para simplificar y conectar ambos, podemos inicializar el decoder con ceros 
+        # y darle el contexto como entrada en cada paso (hecho arriba).
+        # O inicializar con el estado del encoder. Vamos a hacer ambas cosas para máximo flujo.
+        
+        # Expandir estado del encoder para matchear num_layers del decoder si son diferentes
+        # Aquí asumimos que queremos inicializar el decoder.
+        # Si decoder tiene más layers, repetimos o rellenamos.
+        # Por simplicidad, dejamos que el decoder arranque de 0 pero reciba el contexto fuerte en la entrada.
+        
+        decoder_out, _ = self.decoder(decoder_input)
         
         # 4. Proyectar a espacio Wav2Vec2
-        # (B, L, 768)
-        generated_embeddings = self.output_projection(lstm_out)
+        # (B, L_audio, 768)
+        generated_embeddings = self.output_projection(decoder_out)
         
         return generated_embeddings

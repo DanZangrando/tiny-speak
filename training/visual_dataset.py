@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from .config import get_repo_root, load_master_dataset_config
+from utils import get_language_letters
 
 
 Split = Literal["train", "val", "test"]
@@ -93,15 +94,44 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
         augment: bool = False,
         split_ratios: Dict[Split, float] | None = None,
         seed: int = 42,
+        whitelist_chars: List[str] | None = None,
+        target_language: str | None = None,
     ) -> None:
         config = load_master_dataset_config()
         visual_cfg = config.get("visual_dataset", {})
         generated = visual_cfg.get("generated_images", {})
+        
+        if whitelist_chars:
+            generated = {k: v for k, v in generated.items() if k in whitelist_chars}
+            
+        # Filtrar por idioma si se especifica
+        if target_language:
+            # 1. Obtener letras válidas para el idioma
+            allowed_letters = set(get_language_letters(target_language))
+            
+            filtered_generated = {}
+            for letter, entries in generated.items():
+                # Si la letra no es del idioma, saltar
+                if letter.lower() not in allowed_letters:
+                    continue
+                
+                # 2. Filtrar imágenes: Aceptar idioma específico, 'dataset' (genérico) o None (legacy)
+                valid_entries = [
+                    e for e in entries 
+                    if e.get('language') == target_language or 
+                       e.get('language') == 'dataset' or
+                       e.get('language') is None or
+                       (e.get('metadata', {}).get('language') == target_language)
+                ]
+                if valid_entries:
+                    filtered_generated[letter] = valid_entries
+            generated = filtered_generated
+            
         if not generated:
-            raise ValueError(
-                "No se encontraron imágenes generadas en master_dataset_config.json. "
-                "Primero genera un dataset visual desde Visual Dataset Manager."
-            )
+            msg = "El dataset visual no contiene imágenes generadas"
+            if target_language:
+                msg += f" para el idioma '{target_language}'"
+            raise ValueError(msg + ".")
 
         self.repo_root = get_repo_root()
         self.letters: List[str] = sorted(generated.keys())
@@ -181,12 +211,14 @@ def build_visual_dataloaders(
     num_workers: int = 0,
     seed: int = 42,
     split_ratios: Dict[Split, float] | None = None,
+    whitelist_chars: List[str] | None = None,
+    target_language: str | None = None,
 ) -> Tuple[VisualLetterDataset, VisualLetterDataset, VisualLetterDataset, Dict[Split, DataLoader]]:
     """Create stratified dataloaders for train/val/test splits."""
 
-    train_ds = VisualLetterDataset(split="train", augment=True, seed=seed, split_ratios=split_ratios)
-    val_ds = VisualLetterDataset(split="val", augment=False, seed=seed, split_ratios=split_ratios)
-    test_ds = VisualLetterDataset(split="test", augment=False, seed=seed, split_ratios=split_ratios)
+    train_ds = VisualLetterDataset(split="train", augment=True, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
+    val_ds = VisualLetterDataset(split="val", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
+    test_ds = VisualLetterDataset(split="test", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
 
     loaders = {
         "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers),
