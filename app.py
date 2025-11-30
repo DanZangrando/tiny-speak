@@ -20,13 +20,12 @@ from PIL import Image
 
 # Configurar la página
 st.set_page_config(
-    page_title="TinySpeak Dashboard",
-    page_icon="🎤",
+    page_title="TinyLearner Dashboard",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Importar módulos del proyecto
 # Importar módulos del proyecto
 from models import PhonologicalPathway, VisualPathway
 from utils import (
@@ -40,6 +39,7 @@ from diccionarios import (
 
 # Importar componente de sidebar moderna
 from components.modern_sidebar import display_modern_sidebar
+from components.diagrams import get_full_flow_diagram
 
 # =============================================================================
 # CONFIGURACIÓN Y SETUP
@@ -53,6 +53,62 @@ from training.config import load_master_dataset_config, save_master_dataset_conf
 
 def render_experiment_config():
     """Renderiza la configuración global del experimento en la página principal."""
+    
+    # Título principal y descripción
+    st.title("TinyLearner: Sistema Multimodal de Lenguaje")
+    st.markdown("### 🧠 Fundamentos Científicos y Arquitectura Cognitiva")
+    
+    with st.expander("📖 Explicación del Modelo y Flujo de Información", expanded=True):
+        st.markdown("""
+        ### 🔬 Robustez Científica del Modelo
+        TinyLearner no es solo una red neuronal; es una implementación computacional inspirada en la neurociencia cognitiva del lenguaje.
+
+        #### 1. Teoría de la Doble Ruta (Dual Route Theory)
+        La arquitectura implementa explícitamente la **Ruta Subléxica** de la lectura:
+        *   **TinySpeller (G2P)** simula el flujo desde el **Área de la Forma Visual de la Palabra (VWFA)** hacia la **Corteza Auditiva**.
+        *   No realiza una traducción simple (letra a vector), sino una **transformación cross-modal**: genera una secuencia temporal de embeddings auditivos a partir de una secuencia visual.
+        *   Esto permite leer palabras nuevas o pseudopalabras, tal como lo hace el cerebro humano.
+
+        #### 2. Codificación Predictiva (Predictive Coding)
+        El aprendizaje se basa en la minimización del error de predicción:
+        *   El modelo **"imagina"** cómo debería sonar una palabra (genera embeddings).
+        *   El **"Oído Interno" (TinyEars)** compara esta imaginación con la percepción real.
+        *   La **Perceptual Loss** fuerza a que la imaginación sea indistinguible de la realidad en el espacio latente auditivo.
+
+        #### 3. Isomorfismo Representacional
+        Los embeddings generados no son arbitrarios; viven en el mismo espacio vectorial que los sonidos reales. Esto es consistente con estudios de fMRI que muestran que **imaginar** y **escuchar** una palabra activan patrones neuronales superpuestos en el Giro Temporal Superior.
+        
+        #### 🧩 Componentes del Modelo
+        
+        1.  **👁️ TinyEyes (Visual Pathway):**
+            *   **Función:** Simula la corteza visual (V1 -> IT).
+            *   **Tarea:** Procesa la imagen del texto y extrae características visuales (logits de grafemas).
+            
+        2.  **👂 TinyEars Phonemes (Auditory Pathway - Judge 1):**
+            *   **Función:** Simula la corteza auditiva primaria.
+            *   **Tarea:** "Escucha" fonemas reales y genera embeddings de referencia.
+            *   **Rol:** Actúa como **Juez Perceptual** para TinySpeller, forzando a que la "imaginación" de los fonemas sea indistinguible del sonido real.
+            
+        3.  **👂 TinyEars Words (Auditory Pathway - Judge 2):**
+            *   **Función:** Simula el reconocimiento auditivo de palabras completas.
+            *   **Tarea:** "Escucha" palabras habladas y genera embeddings de referencia.
+            *   **Rol:** Actúa como **Juez Perceptual** para TinyReader, validando que la secuencia completa suene como una palabra real.
+            
+        4.  **🗣️ TinySpeller (Grapheme-to-Phoneme):**
+            *   **Función:** Simula la conversión grafema-fonema (Ruta Subléxica).
+            *   **Tarea:** Toma los logits visuales de TinyEyes e "imagina" una secuencia de embeddings de fonemas.
+            *   **Entrenamiento:** Se alinea con TinyEars Phonemes mediante **Soft-DTW** y **Perceptual Loss**.
+            
+        5.  **🧠 TinyReader (Phoneme-to-Word):**
+            *   **Función:** Simula la síntesis de la palabra completa (Lectura).
+            *   **Tarea:** Toma la secuencia de fonemas imaginados por TinySpeller y genera una representación auditiva de la palabra completa.
+            *   **Entrenamiento:** Se alinea con TinyEars Words para asegurar que la lectura sea fluida y correcta.
+        """)
+        
+        st.markdown("#### 🔄 Flujo de Información y Entrenamiento")
+        st.graphviz_chart(get_full_flow_diagram())
+
+    st.markdown("---")
     st.markdown("### 🛠️ Configuración del Experimento")
     st.info("Define aquí los parámetros globales para el experimento de transparencia.")
     
@@ -166,7 +222,6 @@ def setup_models(autoload: bool = False):
         wav2vec_model = load_wav2vec_model(device=device)
 
         # Inicializar modelos
-        # PhonologicalPathway ya no necesita TinySpeak, es autocontenido
         phonological_pathway = PhonologicalPathway(num_classes=len(words))
         visual_pathway = VisualPathway(num_classes=len(words))
 
@@ -545,35 +600,7 @@ def display_system_metrics():
         if st.button("🔄 Actualizar métricas", key="refresh_metrics"):
             st.rerun()
 
-def display_model_cards():
-    """Muestra las tarjetas de información de los modelos"""
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        <div class="model-card">
-        <h4>🎵 Phonological Pathway</h4>
-        <p><strong>Audio → Palabra</strong></p>
-        <ul>
-        <li>🤖 <strong>Feature Extractor:</strong> Custom CNN</li>
-        <li>🧠 <strong>Encoder:</strong> Transformer (2 Layers)</li>
-        <li>🎯 <strong>Output:</strong> Linear Classification Head</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col2:
-        st.markdown("""
-        <div class="model-card">
-        <h4>🖼️ Visual Pathway</h4>
-        <p><strong>Imagen → Letra</strong></p>
-        <ul>
-        <li>🧠 <strong>Backbone:</strong> Custom CNN (V1→V2→V4→IT)</li>
-        <li>🔄 <strong>Decoder:</strong> AvgPool → Flatten → Linear</li>
-        <li>🎯 <strong>Output:</strong> Linear Classification Head</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
+
 
 
 
@@ -595,12 +622,15 @@ def display_dataset_statistics():
     st.info(f"🎯 **Vocabulario activo:** {dic_info.get('descripcion', 'Sin definir')} ({len(dic_info.get('palabras', []))} palabras)")
     
     # Pestañas para diferentes vistas de estadísticas
-    tab1, tab2, tab3 = st.tabs(["🎵 Audio Dataset", "🖼️ Visual Dataset", "📈 Análisis Comparativo"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🎵 Audio Dataset", "� Phoneme Dataset", "�🖼️ Visual Dataset", "📈 Análisis Comparativo"])
     
     with tab1:
         display_audio_statistics(audio_config, master_config)
-    
+
     with tab2:
+        display_phoneme_statistics(master_config)
+    
+    with tab3:
         # Usar función mejorada si hay imágenes generadas en master_config
         images_exist = (master_config and 
                        master_config.get('visual_dataset', {}).get('generated_images', {}))
@@ -610,8 +640,186 @@ def display_dataset_statistics():
         else:
             display_visual_statistics(visual_config, master_config)
     
-    with tab3:
+    with tab4:
         display_comparative_analysis(audio_config, visual_config, master_config)
+
+def display_phoneme_statistics(master_config):
+    """Estadísticas del dataset de fonemas (similar a audio)"""
+    st.info("👂 **Dataset de Fonemas**: Análisis estadístico por fonemas y variaciones")
+    
+    phoneme_samples = master_config.get('phoneme_samples', {})
+    
+    if not phoneme_samples:
+        st.warning("📭 No hay dataset de fonemas generado")
+        return
+    
+    # Aplanar estructura (idioma -> fonema -> lista)
+    flat_samples = {}
+    for lang, phonemes_data in phoneme_samples.items():
+        if isinstance(phonemes_data, dict):
+            for phoneme, vars_list in phonemes_data.items():
+                flat_samples[phoneme] = vars_list
+    
+    samples = flat_samples
+    
+    if not samples:
+        st.warning("📭 El dataset de fonemas está vacío.")
+        return
+
+    # Métricas principales con diseño moderno (Igual que Audio)
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_fonemas = len(samples)
+    total_muestras = sum(len(variaciones) for variaciones in samples.values())
+    promedio_por_fonema = total_muestras / total_fonemas if total_fonemas > 0 else 0
+    
+    # Análisis de métodos y tipos
+    metodos_count = {}
+    duraciones = []
+    pitch_factors = []
+    speed_factors = []
+    volume_factors = []
+    
+    for phoneme, variaciones in samples.items():
+        for variacion in variaciones:
+            metodo = variacion.get('metodo_sintesis', 'sin_especificar')
+            metodos_count[metodo] = metodos_count.get(metodo, 0) + 1
+            
+            if 'duracion_ms' in variacion and variacion['duracion_ms'] > 0:
+                duraciones.append(variacion['duracion_ms'])
+            if 'pitch_factor' in variacion:
+                pitch_factors.append(variacion['pitch_factor'])
+            if 'speed_factor' in variacion:
+                speed_factors.append(variacion['speed_factor'])
+            if 'volume_factor' in variacion:
+                volume_factors.append(variacion['volume_factor'])
+            
+    # Cards de métricas modernas
+    with col1:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 1rem; border-radius: 15px; text-align: center; color: white;">
+            <h3>👂</h3>
+            <h2>{}</h2>
+            <p>Fonemas</p>
+        </div>
+        """.format(total_fonemas), unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                    padding: 1rem; border-radius: 15px; text-align: center; color: white;">
+            <h3>🎙️</h3>
+            <h2>{:,}</h2>
+            <p>Muestras Total</p>
+        </div>
+        """.format(total_muestras), unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
+                    padding: 1rem; border-radius: 15px; text-align: center; color: white;">
+            <h3>📊</h3>
+            <h2>{:.1f}</h2>
+            <p>Promedio/Fonema</p>
+        </div>
+        """.format(promedio_por_fonema), unsafe_allow_html=True)
+    
+    with col4:
+        metodo_principal = max(metodos_count.items(), key=lambda x: x[1])[0] if metodos_count else 'N/A'
+        metodo_nombre = {'gtts': 'Google TTS', 'espeak': 'eSpeak'}.get(metodo_principal, metodo_principal.title())
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); 
+                    padding: 1rem; border-radius: 15px; text-align: center; color: white;">
+            <h3>🔊</h3>
+            <h2 style="font-size: 1rem;">{}</h2>
+            <p>Método Principal</p>
+        </div>
+        """.format(metodo_nombre), unsafe_allow_html=True)
+
+    # Análisis detallado
+    st.markdown("#### 🎼 Análisis Dinámico de Fonemas")
+    
+    detailed_data = []
+    for phoneme, variaciones in samples.items():
+        for variacion in variaciones:
+            detailed_data.append({
+                'Fonema': phoneme,
+                'Método': variacion.get('metodo_sintesis', 'No especificado'),
+                'Duración_ms': variacion.get('duracion_ms', 0),
+                'Duración_s': variacion.get('duracion_ms', 0) / 1000.0,
+                'Pitch': variacion.get('pitch_factor', 1.0),
+                'Velocidad': variacion.get('speed_factor', 1.0), 
+                'Volumen': variacion.get('volume_factor', 1.0),
+            })
+            
+    df_phoneme = pd.DataFrame(detailed_data)
+    
+    if not df_phoneme.empty:
+        col_analysis1, col_analysis2 = st.columns(2)
+        
+        with col_analysis1:
+            # Histograma de duraciones con estadísticas
+            if duraciones:
+                fig_duration = px.histogram(
+                    df_phoneme[df_phoneme['Duración_s'] > 0],
+                    x='Duración_s',
+                    nbins=25,
+                    title="⏱️ Distribución de Duraciones",
+                    marginal="box",
+                    opacity=0.7,
+                    color_discrete_sequence=['#00CC96'] # Color distinto para fonemas
+                )
+                fig_duration.update_xaxes(title_text="Duración (segundos)")
+                fig_duration.update_yaxes(title_text="Frecuencia")
+                st.plotly_chart(fig_duration, width='stretch')
+                
+                # Estadísticas de duración
+                duraciones_s = [d/1000 for d in duraciones if d > 0]
+                if duraciones_s:
+                    col_dur1, col_dur2, col_dur3 = st.columns(3)
+                    col_dur1.metric("⏱️ Duración Media", f"{np.mean(duraciones_s):.2f}s")
+                    col_dur2.metric("📏 Rango", f"{np.min(duraciones_s):.2f}s - {np.max(duraciones_s):.2f}s")
+                    col_dur3.metric("📊 Desviación Std", f"{np.std(duraciones_s):.2f}s")
+
+        with col_analysis2:
+            # Análisis de variaciones de parámetros (Pitch, Speed, Volume)
+            param_data = []
+            
+            for param_name, param_list in [('Pitch', pitch_factors), ('Velocidad', speed_factors), ('Volumen', volume_factors)]:
+                if param_list:
+                    for val in param_list:
+                        param_data.append({'Parámetro': param_name, 'Valor': val})
+            
+            if param_data:
+                df_params = pd.DataFrame(param_data)
+                
+                fig_params = px.violin(
+                    df_params,
+                    x='Parámetro',
+                    y='Valor',
+                    title="🎛️ Distribución de Parámetros de Variación",
+                    box=True,
+                    points="outliers"
+                )
+                fig_params.update_layout(height=400)
+                st.plotly_chart(fig_params, width='stretch')
+                
+                # Estadísticas rápidas de parámetros
+                st.markdown("**📈 Estadísticas de Variación:**")
+                param_stats_cols = st.columns(3)
+                
+                for i, (param_name, param_list) in enumerate([('Pitch', pitch_factors), ('Velocidad', speed_factors), ('Volumen', volume_factors)]):
+                    if param_list and i < 3:
+                        with param_stats_cols[i]:
+                            avg_val = np.mean(param_list)
+                            std_val = np.std(param_list)
+                            st.write(f"**{param_name}**")
+                            st.write(f"μ = {avg_val:.3f}")
+                            st.write(f"σ = {std_val:.3f}")
+            
+        with st.expander("Ver Datos Crudos"):
+            st.dataframe(df_phoneme)
 
 def display_audio_statistics(audio_config, master_config):
     """Estadísticas avanzadas del dataset de audio con análisis de ondas"""
@@ -804,7 +1012,7 @@ def display_audio_statistics(audio_config, master_config):
 
 def display_visual_statistics(visual_config, master_config):
     """Estadísticas del dataset visual"""
-    st.info("�️ **Dataset Visual**: Basado en EMNIST para reconocimiento de letras")
+    st.info("🖼️ **Dataset Visual**: Basado en EMNIST para reconocimiento de letras")
     
     if not visual_config or not visual_config.get('generated_images'):
         st.warning("📭 No hay dataset visual generado")
@@ -853,7 +1061,7 @@ def display_visual_statistics(visual_config, master_config):
     else:
         fecha_str = fecha_gen
     
-    st.info(f"� **Generado:** {fecha_str}")
+    st.info(f"📅 **Generado:** {fecha_str}")
 
 def display_comparative_analysis(audio_config, visual_config, master_config):
     """Análisis comparativo entre datasets"""
@@ -1303,21 +1511,17 @@ def main():
     # Sidebar modernizada
     display_modern_sidebar("dashboard")
     
-    # Header principal
-    st.markdown('<h1 class="main-header">🎤 TinySpeak Dashboard</h1>', unsafe_allow_html=True)
-    
     # Renderizar configuración del experimento
     render_experiment_config()
+
+
     
     st.markdown("---")
     
     # Métricas del sistema en tiempo real
     display_system_metrics()
     
-    # Dashboard de modelos
-    st.markdown("---")
-    st.markdown("### 🧠 Arquitectura del Sistema")
-    display_model_cards()
+
     
     # Estadísticas completas de datasets
     st.markdown("---")

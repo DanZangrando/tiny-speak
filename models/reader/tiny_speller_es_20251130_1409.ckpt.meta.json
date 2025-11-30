@@ -1,0 +1,61 @@
+{
+  "timestamp": 1764522571.222737,
+  "date": "2025-11-30 14:09:31",
+  "config": {
+    "epochs": 50,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "dtw": 1.0,
+      "perceptual": 0.5
+    },
+    "listener_ckpt": "/home/daniel/Proyectos/tiny_speak/models/listener/phoneme_listener_es_20251129_1547.ckpt",
+    "recognizer_ckpt": "/home/daniel/Proyectos/tiny_speak/models/recognizer/recognizer_es_20251129_1545.ckpt",
+    "language": "es",
+    "vocab": [
+      "a",
+      "b",
+      "c",
+      "ch",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "ll",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "rr",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "\u00f1"
+    ],
+    "training_phase": "g2p",
+    "type": "speller"
+  },
+  "metrics": {
+    "train_g2p_perceptual": 1.5029568672180176,
+    "train_g2p_dtw": 115.44837951660156,
+    "train_loss": 116.19985961914062,
+    "train_phoneme_acc": 0.375,
+    "val_g2p_perceptual": 1.543749213218689,
+    "val_g2p_dtw": 121.79753875732422,
+    "val_loss": 122.56941223144531,
+    "val_phoneme_acc": 0.5199097394943237,
+    "epoch": 49
+  }
+}

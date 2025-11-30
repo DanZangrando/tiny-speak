@@ -89,9 +89,8 @@ def display_modern_sidebar(page_prefix="default"):
         st.markdown(f"""
         <div style="background: {device_color};
                     padding: 0.6rem; border-radius: 8px; margin: 0.3rem 0;
-                    color: white; text-align: center; font-weight: 500;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    backdrop-filter: blur(5px);">
+                    color: #FAFAFA; text-align: center; font-weight: 500;
+                    border: 1px solid rgba(255, 255, 255, 0.1);">
             {device_icon} {device_name}
         </div>
         """, unsafe_allow_html=True)
@@ -127,18 +126,18 @@ def display_modern_sidebar(page_prefix="default"):
                     if isinstance(word_variations, list):
                         audio_samples += len(word_variations)
                         
-            audio_color = "rgba(76, 175, 80, 0.2)"
+            audio_color = "rgba(76, 175, 80, 0.15)" # Más suave para fondo claro
             audio_status = f"✅ {audio_samples:,} muestras ({audio_words} palabras)"
         else:
-            audio_color = "rgba(255, 193, 7, 0.2)"
+            audio_color = "rgba(255, 193, 7, 0.15)"
             audio_status = "⚙️ No generado"
         
         st.markdown(f"""
         <div style="background: {audio_color};
                     padding: 0.6rem; border-radius: 8px; margin: 0.3rem 0;
-                    color: white; text-align: left; font-weight: 400;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    backdrop-filter: blur(5px); font-size: 0.9rem;">
+                    color: #FAFAFA; text-align: left; font-weight: 400;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    font-size: 0.9rem;">
             🎵 {audio_status}
         </div>
         """, unsafe_allow_html=True)
@@ -147,19 +146,58 @@ def display_modern_sidebar(page_prefix="default"):
         if visual_config and visual_config.get('generated_images'):
             visual_samples = sum(len(v) for v in visual_config['generated_images'].values())
             visual_letters = len(visual_config['generated_images'])
-            visual_color = "rgba(103, 58, 183, 0.2)"
-            visual_status = f"✅ {visual_samples:,} imágenes ({visual_letters} letras)"
+            visual_color = "rgba(103, 58, 183, 0.15)" # Violeta suave
+            visual_status = f"✅ {visual_samples:,} imágenes ({visual_letters} grafemas)"
         else:
-            visual_color = "rgba(255, 193, 7, 0.2)"
+            visual_color = "rgba(255, 193, 7, 0.15)"
             visual_status = "⚙️ No generado"
         
         st.markdown(f"""
         <div style="background: {visual_color};
                     padding: 0.6rem; border-radius: 8px; margin: 0.3rem 0;
-                    color: white; text-align: left; font-weight: 400;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    backdrop-filter: blur(5px); font-size: 0.9rem;">
+                    color: #FAFAFA; text-align: left; font-weight: 400;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    font-size: 0.9rem;">
             🖼️ {visual_status}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Phoneme Dataset Card
+        phoneme_config = master_config.get('phoneme_samples', {}) if master_config else {}
+        if phoneme_config:
+            phoneme_samples = 0
+            phoneme_count = 0
+            
+            # Estructura: idioma -> fonema -> lista
+            for lang_data in phoneme_config.values():
+                if isinstance(lang_data, dict):
+                    phoneme_count += len(lang_data)
+                    for p_list in lang_data.values():
+                        phoneme_samples += len(p_list)
+            
+            phoneme_color = "rgba(233, 30, 99, 0.15)" # Pink/Rose
+            phoneme_status = f"✅ {phoneme_samples:,} muestras ({phoneme_count} fonemas)"
+        else:
+            phoneme_color = "rgba(255, 193, 7, 0.15)"
+            phoneme_status = "⚙️ No generado"
+            
+        st.markdown(f"""
+        <div style="background: {phoneme_color};
+                    padding: 0.6rem; border-radius: 8px; margin: 0.3rem 0;
+                    color: #FAFAFA; text-align: left; font-weight: 400;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    font-size: 0.9rem;">
+            🗣️ {phoneme_status}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div style="font-size: 0.85rem; color: #AAAAAA;">
+        <b>1. TinyEyes (Visual):</b> CNN que aprende a "ver" grafemas (Visual Embeddings).<br>
+        <b>2. TinyEars (Phonemes):</b> CNN+Transformer que aprende a "oír" fonemas (Phoneme Embeddings).<br>
+        <b>3. TinyEars (Words):</b> CNN+Transformer que aprende a "oír" palabras (Word Embeddings).<br>
+        <b>4. TinySpeller (Stage 1):</b> Aprende Grapheme-to-Phoneme (G2P).<br>
+        <b>5. TinyReader (Stage 2):</b> Aprende Phoneme-to-Word (P2W).
         </div>
         """, unsafe_allow_html=True)
         
@@ -168,22 +206,25 @@ def display_modern_sidebar(page_prefix="default"):
             st.markdown("""
             <div style="font-size: 0.85rem;">
             
-            **🎵 PhonologicalPathway**
-            *   **Input:** Audio (Waveform)
-            *   **Features:** MelSpectrogram
-            *   **Encoder:** Transformer Encoder
-            *   **Output:** Concept Class
+            **👂 TinyEars (Phonemes)**
+            *   **Input:** Audio (Phoneme)
+            *   **Output:** Phoneme Class
+            *   **Role:** Auditory Judge for Stage 1
             
-            **🖼️ VisualPathway** 
-            *   **Input:** Image (Letter)
-            *   **Backbone:** CNN (Custom)
-            *   **Decoder:** Linear Classifier
-            *   **Output:** Letter Class
+            **👂 TinyEars (Words)**
+            *   **Input:** Audio (Word)
+            *   **Output:** Word Class
+            *   **Role:** Auditory Judge for Stage 2
             
-            **🧠 TinyReader**
-            *   **Input:** Spelling (Visual Concepts)
-            *   **Model:** Transformer Decoder
-            *   **Output:** Audio Embeddings (Imagined Speech)
+            **🧠 TinySpeller (Stage 1)**
+            *   **Input:** Text (Graphemes)
+            *   **Output:** Phoneme Embeddings
+            *   **Goal:** Learn G2P mapping
+            
+            **🧠 TinyReader (Stage 2)**
+            *   **Input:** Phoneme Embeddings
+            *   **Output:** Word Embeddings
+            *   **Goal:** Learn P2W mapping (Reading)
             
             </div>
             """, unsafe_allow_html=True)

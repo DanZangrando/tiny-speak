@@ -223,20 +223,20 @@ class VisualPathway(nn.Module):
 
 class TinyReader(Module):
     """
-    Modelo Generativo (Top-Down): Secuencia de Letras (Logits) -> Imaginación Auditiva (Wav2Vec2 Embeddings).
+    Modelo Generativo (Top-Down): Secuencia de Letras (Logits) -> Imaginación Auditiva (Embeddings).
     Arquitectura Seq2Seq: Encoder (Lee letras) -> Decoder (Imagina audio).
     """
     def __init__(
         self, 
         input_dim: int, # Dimensión de los logits de entrada (ej. 26 letras)
         hidden_dim: int = 256, 
-        wav2vec_dim: int = 768, 
+        output_dim: int = 256, 
         num_layers: int = 2
     ):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.wav2vec_dim = wav2vec_dim
+        self.output_dim = output_dim
         
         # Encoder: Procesa la secuencia de logits de las letras
         # Input: (B, L_text, input_dim)
@@ -256,8 +256,8 @@ class TinyReader(Module):
             batch_first=True
         )
         
-        # Proyección de salida: Latente -> Embedding Wav2Vec2
-        self.output_projection = nn.Linear(hidden_dim, wav2vec_dim)
+        # Proyección de salida: Latente -> Embedding Target
+        self.output_projection = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x_seq, target_length=None):
         """
@@ -284,20 +284,25 @@ class TinyReader(Module):
         decoder_input = context_vector.unsqueeze(1).expand(-1, target_length, -1)
         
         # 3. Decoder (Generar audio)
-        # Pasamos el estado del encoder como estado inicial del decoder?
-        # Para simplificar y conectar ambos, podemos inicializar el decoder con ceros 
-        # y darle el contexto como entrada en cada paso (hecho arriba).
-        # O inicializar con el estado del encoder. Vamos a hacer ambas cosas para máximo flujo.
-        
-        # Expandir estado del encoder para matchear num_layers del decoder si son diferentes
-        # Aquí asumimos que queremos inicializar el decoder.
-        # Si decoder tiene más layers, repetimos o rellenamos.
-        # Por simplicidad, dejamos que el decoder arranque de 0 pero reciba el contexto fuerte en la entrada.
-        
         decoder_out, _ = self.decoder(decoder_input)
         
-        # 4. Proyectar a espacio Wav2Vec2
-        # (B, L_audio, 768)
+        # 4. Proyectar a espacio Target
+        # (B, L_audio, output_dim)
         generated_embeddings = self.output_projection(decoder_out)
         
         return generated_embeddings
+
+class TinyReaderG2P(TinyReader):
+    """
+    Stage 1: Grapheme (Letters) -> Phoneme Embeddings.
+    """
+    def __init__(self, input_dim, hidden_dim=256, output_dim=256, num_layers=2):
+        super().__init__(input_dim, hidden_dim, output_dim, num_layers)
+
+class TinyReaderP2W(TinyReader):
+    """
+    Stage 2: Phoneme Embeddings -> Word Embeddings.
+    """
+    def __init__(self, input_dim=256, hidden_dim=256, output_dim=256, num_layers=2):
+        super().__init__(input_dim, hidden_dim, output_dim, num_layers)
+

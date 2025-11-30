@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from components.modern_sidebar import display_modern_sidebar
+from utils import get_phoneme_inventory
 
 st.set_page_config(
     page_title="📊 Visual Dataset Manager - TinySpeak",
@@ -319,15 +320,28 @@ def generate_letter_image(letter, font_size=32, rotation=0, noise_level=0.0, fon
             font = ImageFont.load_default()
         
         # Calcular posición centrada
-        bbox = draw.textbbox((0, 0), letter.upper(), font=font)
+        text = letter.upper()
+        bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
+        
+        # Auto-escalado si es demasiado ancho (para digrafos como CH, LL)
+        if text_width > img_size[0] - 4: # Margen de 2px
+            scale_factor = (img_size[0] - 4) / text_width
+            new_font_size = int(font_size * scale_factor)
+            try:
+                font = ImageFont.truetype(font_path, new_font_size)
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+            except:
+                pass # Fallback to original if resize fails
         
         x = (img_size[0] - text_width) // 2
         y = (img_size[1] - text_height) // 2
         
         # Dibujar letra
-        draw.text((x, y), letter.upper(), fill=0, font=font)  # Negro sobre blanco
+        draw.text((x, y), text, fill=0, font=font)  # Negro sobre blanco
         
         # Aplicar rotación si se especifica
         if rotation != 0:
@@ -600,7 +614,7 @@ def main():
     with analysis_col2:
         st.markdown(f"""
         <div class="metric-card">
-            <h4>�️ Estado del Dataset Visual</h4>
+            <h4>️ Estado del Dataset Visual</h4>
             <p><strong>{len(visual_config.get('generated_images', {}))} letras generadas</strong></p>
             <p style="font-size: 0.8rem; margin-top: 0.5rem;">
                 {sum(len(imgs) for imgs in visual_config.get('generated_images', {}).values())} imágenes totales
@@ -618,12 +632,13 @@ def main():
     with strategy_col1:
         generation_strategy = st.radio(
             "🎯 **Estrategia de Generación**",
-            options=["dataset_letters", "language_complete"],
+            options=["dataset_letters", "language_complete", "phoneme_based"],
             format_func=lambda x: {
                 "dataset_letters": f"🔤 Solo letras del dataset ({len(dataset_letters)} letras)",
-                "language_complete": "🌐 Alfabeto completo del idioma"
+                "language_complete": "🌐 Alfabeto completo del idioma",
+                "phoneme_based": "🗣️ Basado en Fonemas (Incluye digrafos: CH, LL, RR)"
             }[x],
-            help="Elige si generar solo las letras presentes en tu dataset o todo el alfabeto del idioma"
+            help="Elige si generar solo las letras, todo el alfabeto, o grafemas fonémicos (importante para TinySpeller)"
         )
     
     with strategy_col2:
@@ -640,6 +655,19 @@ def main():
                 help="Selecciona el idioma para generar el alfabeto completo"
             )
             target_letters = get_language_letters(target_language)
+        elif generation_strategy == "phoneme_based":
+            target_language = st.selectbox(
+                "🌍 **Idioma de los Fonemas**",
+                options=["es", "en", "fr", "de"],
+                index=0,
+                format_func=lambda x: x.upper()
+            )
+            # Obtener inventario de fonemas y usarlo como grafemas objetivo
+            # Nota: get_phoneme_inventory devuelve fonemas (ej. 'ch', 'rr').
+            # Asumimos que la representación escrita del fonema es lo que queremos generar visualmente.
+            target_letters = get_phoneme_inventory(target_language)
+            # Filtrar duplicados y ordenar
+            target_letters = sorted(list(set(target_letters)))
         else:
             target_language = "dataset"
             target_letters = dataset_letters
@@ -744,11 +772,17 @@ def main():
         st.markdown("### 🚀 Generación del Dataset Visual")
         
         # Resumen de configuración
+        strategy_label = {
+            'language_complete': 'Alfabeto completo',
+            'phoneme_based': 'Basado en Fonemas',
+            'dataset_letters': 'Solo letras del dataset'
+        }.get(generation_strategy, 'Personalizado')
+
         st.markdown(f"""
         <div style="background: rgba(76, 175, 80, 0.1); padding: 1rem; border-radius: 8px;">
             <h4>📋 Resumen de Configuración</h4>
             <ul>
-                <li><strong>Estrategia:</strong> {'Alfabeto completo' if generation_strategy == 'language_complete' else 'Solo letras del dataset'}</li>
+                <li><strong>Estrategia:</strong> {strategy_label}</li>
                 <li><strong>Idioma:</strong> {target_language.upper()}</li>
                 <li><strong>Letras a generar:</strong> {len(letters_to_generate)} de {len(target_letters)}</li>
                 <li><strong>Variaciones por letra:</strong> {variations_per_letter}</li>

@@ -59,9 +59,17 @@ def _stratified_split(
         if train_size == 0 and n_total > 0:
             train_size = 1
 
+        # Ensure at least one item goes to val split when possible (for confusion matrix)
+        if val_size == 0 and n_total >= 2:
+            val_size = 1
+
         # Adjust sizes to avoid exceeding the total count.
         if train_size + val_size > n_total:
-            val_size = max(0, n_total - train_size)
+            # Prioritize keeping at least 1 val sample if we have enough data
+            if n_total >= 2 and val_size == 1:
+                train_size = n_total - val_size
+            else:
+                val_size = max(0, n_total - train_size)
 
         test_size = max(0, n_total - train_size - val_size)
 
@@ -97,7 +105,27 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
         seed: int = 42,
         whitelist_chars: List[str] | None = None,
         target_language: str | None = None,
-    ) -> None:
+        class_names: List[str] | None = None,
+    ):
+        """
+        Args:
+            root_dir: Root directory of the repository (optional).
+            split: 'train', 'val', or 'test'.
+            augment: Whether to apply data augmentation.
+            transform: Custom transform to apply.
+            seed: Random seed for splitting.
+            split_ratios: Dictionary of split ratios.
+            whitelist_chars: List of characters to include (optional).
+            target_language: Language code to filter by (optional).
+            class_names: Explicit list of class names to enforce order and subset (optional).
+        """
+        self.split = split
+        self.augment = augment
+        self.seed = seed
+        self.whitelist_chars = whitelist_chars
+        self.target_language = target_language
+        self.forced_class_names = class_names
+
         config = load_master_dataset_config()
         visual_cfg = config.get("visual_dataset", {})
         generated = visual_cfg.get("generated_images", {})
@@ -109,6 +137,10 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
         if target_language:
             # 1. Obtener letras válidas para el idioma
             allowed_letters = set(get_language_letters(target_language))
+            if whitelist_chars:
+                allowed_letters.update(whitelist_chars)
+            if self.forced_class_names:
+                allowed_letters.update(self.forced_class_names)
             
             filtered_generated = {}
             for letter, entries in generated.items():
@@ -135,7 +167,15 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
             raise ValueError(msg + ".")
 
         self.repo_root = get_repo_root()
-        self.letters: List[str] = sorted(generated.keys())
+        
+        if self.forced_class_names:
+            # Si se fuerzan clases, usamos esas.
+            # Filtrar generated para que solo tenga esas clases?
+            # O simplemente definimos self.letters y si falta alguna en generated, no tendrá samples.
+            self.letters = self.forced_class_names
+        else:
+            self.letters: List[str] = sorted(generated.keys())
+            
         self.letter_to_index = {letter: idx for idx, letter in enumerate(self.letters)}
 
         ratios = split_ratios or DEFAULT_SPLIT_RATIOS
@@ -230,12 +270,13 @@ def build_visual_dataloaders(
     split_ratios: Dict[Split, float] | None = None,
     whitelist_chars: List[str] | None = None,
     target_language: str | None = None,
+    class_names: List[str] | None = None,
 ) -> Tuple[VisualLetterDataset, VisualLetterDataset, VisualLetterDataset, Dict[Split, DataLoader]]:
     """Create stratified dataloaders for train/val/test splits."""
 
-    train_ds = VisualLetterDataset(split="train", augment=True, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
-    val_ds = VisualLetterDataset(split="val", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
-    test_ds = VisualLetterDataset(split="test", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language)
+    train_ds = VisualLetterDataset(split="train", augment=True, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language, class_names=class_names)
+    val_ds = VisualLetterDataset(split="val", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language, class_names=class_names)
+    test_ds = VisualLetterDataset(split="test", augment=False, seed=seed, split_ratios=split_ratios, whitelist_chars=whitelist_chars, target_language=target_language, class_names=class_names)
 
     loaders = {
         "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers),

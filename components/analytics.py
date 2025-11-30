@@ -36,7 +36,9 @@ def plot_confusion_matrix(y_true, y_pred, classes, title="Matriz de Confusión")
     """
     Genera y muestra una matriz de confusión visualmente atractiva.
     """
-    cm = confusion_matrix(y_true, y_pred)
+    # Asegurar que la matriz se calcule para TODAS las clases en el orden correcto (0..N-1)
+    labels = list(range(len(classes)))
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
     
     # Normalizar para el color (opcional, pero útil)
     cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
@@ -105,7 +107,9 @@ def display_classification_report(y_true, y_pred, classes):
     """
     Muestra el reporte de clasificación de Scikit-Learn en un formato limpio.
     """
-    report = classification_report(y_true, y_pred, target_names=classes, output_dict=True)
+    # Asegurar que se reporten todas las clases, incluso si no están presentes en el batch actual
+    labels = list(range(len(classes)))
+    report = classification_report(y_true, y_pred, labels=labels, target_names=classes, output_dict=True, zero_division=0)
     df_report = pd.DataFrame(report).transpose()
     
     st.subheader("📋 Reporte de Clasificación Detallado")

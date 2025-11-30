@@ -124,8 +124,9 @@ def _compute_split_counts(total: int, ratios: Dict[str, float]) -> Dict[str, int
     return raw_counts
 
 
-def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int, target_language: str | None = None) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
-    generated = config.get("generated_samples", {}) or {}
+def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int, target_language: str | None = None, use_phonemes: bool = False) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
+    source_key = "phoneme_samples" if use_phonemes else "generated_samples"
+    generated = config.get(source_key, {}) or {}
     
     # Filtrar por idioma si se especifica y la estructura es anidada
     if target_language:
@@ -225,6 +226,7 @@ def build_audio_datasets(
     target_sr: int = WAV2VEC_SR,
     whitelist_words: List[str] | None = None,
     target_language: str | None = None,
+    use_phonemes: bool = False,
 ) -> Dict[str, AudioWordDataset]:
     config = load_master_dataset_config()
     ratios = split_ratios or DEFAULT_AUDIO_SPLIT_RATIOS
@@ -232,14 +234,14 @@ def build_audio_datasets(
     if not math.isclose(ratio_total, 1.0, rel_tol=1e-3):
         raise ValueError("Las proporciones de split de audio deben sumar 1.0")
 
-    words, samples_by_word = _load_all_samples(config, target_sr=target_sr, seed=seed, target_language=target_language)
+    words, samples_by_word = _load_all_samples(config, target_sr=target_sr, seed=seed, target_language=target_language, use_phonemes=use_phonemes)
     
     if whitelist_words:
         words = [w for w in words if w in whitelist_words]
         samples_by_word = {w: s for w, s in samples_by_word.items() if w in whitelist_words}
         
     if not words:
-        raise ValueError("El master dataset de audio no contiene muestras generadas (o el filtro eliminó todas).")
+        raise ValueError(f"El dataset de {'fonemas' if use_phonemes else 'audio'} no contiene muestras generadas (o el filtro eliminó todas).")
 
     splits: Dict[str, List[AudioSample]] = {key: [] for key in ratios.keys()}
     for word in words:
@@ -284,13 +286,15 @@ def build_audio_dataloaders(
     shuffle_train: bool = True,
     whitelist_words: List[str] | None = None,
     target_language: str | None = None,
+    use_phonemes: bool = False,
 ) -> Tuple[AudioWordDataset, AudioWordDataset, AudioWordDataset, Dict[str, DataLoader]]:
     datasets = build_audio_datasets(
         seed=seed, 
         split_ratios=split_ratios, 
         target_sr=target_sr, 
         whitelist_words=whitelist_words,
-        target_language=target_language
+        target_language=target_language,
+        use_phonemes=use_phonemes
     )
 
     loaders: Dict[str, DataLoader] = {}

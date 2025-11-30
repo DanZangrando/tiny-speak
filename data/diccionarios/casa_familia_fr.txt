@@ -1,0 +1,35 @@
+maison
+chambre
+cuisine
+salle de bain
+salon
+chambre à coucher
+garage
+jardin
+toit
+sol
+table
+chaise
+lit
+canapé
+télévision
+radio
+téléphone
+ordinateur
+livre
+fenêtre
+porte
+clé
+famille
+père
+mère
+fils
+fille
+frère
+soeur
+grand-père
+grand-mère
+oncle
+tante
+cousin
+cousine

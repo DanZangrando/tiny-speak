@@ -703,18 +703,31 @@ def sistema_verificacion():
     st.markdown("### 🔊 Verificación y Reproducción")
     
     config = load_audio_dataset_config()
-    if not config or not config.get('generated_samples'):
-        st.warning("⚠️ No hay dataset generado para verificar.")
-        st.info("💡 Ve a **🎤 Audio Base** para generar el dataset inicial")
+    if not config:
+        st.warning("⚠️ No hay configuración cargada.")
         return
+
+    # Selector de Tipo de Dataset
+    tipo_dataset = st.radio("Tipo de Dataset", ["Palabras", "Fonemas"], horizontal=True)
     
-    raw_samples = config['generated_samples']
+    if tipo_dataset == "Palabras":
+        raw_samples = config.get('generated_samples', {})
+        if not raw_samples:
+            st.warning("⚠️ No hay dataset de palabras generado.")
+            st.info("💡 Ve a **🎤 Audio Base** para generar el dataset.")
+            return
+    else:
+        raw_samples = config.get('phoneme_samples', {})
+        if not raw_samples:
+            st.warning("⚠️ No hay dataset de fonemas generado.")
+            st.info("💡 Ve a **🗣️ Fonemas** para generar el dataset.")
+            return
     
     # Estrategia de aplanado robusta (Maneja mezcla de estructuras plana y anidada)
     all_samples_flat = {}
     for key, value in raw_samples.items():
         if isinstance(value, list):
-            # Estructura plana: key es la palabra
+            # Estructura plana: key es la palabra (solo para palabras legacy)
             all_samples_flat[key] = value
         elif isinstance(value, dict):
             # Estructura anidada: key es el idioma
@@ -918,6 +931,110 @@ def sistema_verificacion():
         else:
             st.error("❌ No hay datos de audio para esta muestra")
 
+def generar_dataset_fonemas():
+    """Interfaz para generar dataset de fonemas"""
+    st.markdown("### 🗣️ Generación de Dataset de Fonemas")
+    
+    # Cargar inventario de fonemas
+    try:
+        phonemes_path = Path("data/fonemas/phonemes.json")
+        if phonemes_path.exists():
+            with open(phonemes_path, 'r', encoding='utf-8') as f:
+                phoneme_inventory = json.load(f)
+        else:
+            st.error("❌ No se encontró el inventario de fonemas (data/fonemas/phonemes.json)")
+            return
+    except Exception as e:
+        st.error(f"Error cargando inventario de fonemas: {e}")
+        return
+
+    # Cargar configuración
+    config = load_audio_dataset_config()
+    master_config = load_master_config()
+    
+    # Mostrar inventario
+    st.markdown("#### 📚 Inventario de Fonemas")
+    cols = st.columns(len(phoneme_inventory))
+    for i, (lang, phonemes) in enumerate(phoneme_inventory.items()):
+        with cols[i]:
+            st.info(f"**{lang.upper()}**: {len(phonemes)} fonemas")
+            with st.expander("Ver lista"):
+                st.write(", ".join(phonemes))
+    
+    st.markdown("---")
+    
+    # Opciones de generación
+    col_opts1, col_opts2 = st.columns(2)
+    with col_opts1:
+        # Parámetros (reutilizar configuración de audio o permitir override)
+        config_audio = config.get('configuracion_audio', {})
+        num_vars = st.number_input("Variaciones por fonema", min_value=1, max_value=10, value=config_audio.get('num_variaciones', 3))
+        metodo = st.selectbox("Método de síntesis", ['gtts', 'espeak'], index=0 if config_audio.get('metodo_sintesis', 'gtts') == 'gtts' else 1)
+    
+    with col_opts2:
+        rangos = config_audio.get('rangos', {})
+        st.write("Rangos de variabilidad (Configurados en ⚙️):")
+        st.json(rangos)
+
+    if st.button("🚀 Generar Dataset de Fonemas", type="primary"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Inicializar estructura en master_config
+        if 'phoneme_samples' not in master_config:
+            master_config['phoneme_samples'] = {}
+            
+        total_tasks = sum(len(p) for p in phoneme_inventory.values())
+        current_task = 0
+        
+        for lang, phonemes in phoneme_inventory.items():
+            # Inicializar estructura para el idioma
+            if lang not in master_config['phoneme_samples']:
+                master_config['phoneme_samples'][lang] = {}
+                
+            status_text.write(f"⏳ Procesando fonemas {lang.upper()}...")
+            
+            for phoneme in phonemes:
+                try:
+                    # Generar variaciones en carpeta 'fonemas'
+                    variaciones = generar_variaciones_completas(
+                        texto=phoneme,
+                        idioma=lang,
+                        num_variaciones=num_vars,
+                        metodo_sintesis=metodo,
+                        dataset_name=lang, # data/fonemas/{lang}/{phoneme}
+                        rangos=rangos,
+                        base_folder="fonemas"
+                    )
+                    
+                    if variaciones:
+                        master_config['phoneme_samples'][lang][phoneme] = variaciones
+                        
+                except Exception as e:
+                    st.error(f"Error generando fonema {phoneme} ({lang}): {e}")
+                
+                current_task += 1
+                progress_bar.progress(min(current_task / total_tasks, 1.0))
+        
+        status_text.success("✅ Generación de fonemas completada!")
+        st.balloons()
+        
+        master_config['last_update_phonemes'] = datetime.now().isoformat()
+        save_dataset_config(master_config, 'master_dataset_config.json')
+        st.rerun()
+
+    # Visualización de estado actual
+    if 'phoneme_samples' in master_config:
+        st.markdown("#### 📊 Estado del Dataset de Fonemas")
+        samples = master_config['phoneme_samples']
+        total_phonemes = sum(len(p) for p in samples.values())
+        total_audio_files = 0
+        for lang_data in samples.values():
+            for p_list in lang_data.values():
+                total_audio_files += len(p_list)
+        
+        st.metric("Fonemas Generados", f"{total_phonemes} ({total_audio_files} archivos)")
+
 def main():
     """Función principal de la página"""
     
@@ -936,9 +1053,10 @@ def main():
     """, unsafe_allow_html=True)
     
     # Tabs principales organizadas
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "⚙️ Configuración", 
         "🎤 Audio Base", 
+        "🗣️ Fonemas",
         "🎛️ Verificación",
         "📊 Estado del Dataset"
     ])
@@ -948,8 +1066,11 @@ def main():
     
     with tab2:
         generar_audio_base()
-    
+        
     with tab3:
+        generar_dataset_fonemas()
+    
+    with tab4:
         sistema_verificacion()
     
     with tab4:

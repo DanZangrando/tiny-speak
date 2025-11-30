@@ -37,18 +37,21 @@ def train_listener(
     epochs = config.get('epochs', 10)
     lr = config.get('lr', 1e-3)
     batch_size = config.get('batch_size', 32)
+    use_phonemes = config.get('use_phonemes', False)
     
     # 1. Data
     train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
         batch_size=batch_size, 
         num_workers=0, 
         seed=42,
-        target_language=language
+        target_language=language,
+        use_phonemes=use_phonemes
     )
     words = train_ds.class_names
     
     if not words:
-        raise ValueError(f"No hay palabras para el idioma {language}")
+        msg = f"No hay {'fonemas' if use_phonemes else 'palabras'} para el idioma {language}"
+        raise ValueError(msg)
 
     # 2. Model
     model = PhonologicalPathwayLightning(
@@ -72,8 +75,11 @@ def train_listener(
         mode="min"
     )
 
+    # Subdirectorio diferente para fonemas si se desea, o mismo con prefijo
+    sub_dir = "listener_phonemes" if use_phonemes else "listener"
+    
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        dirpath=f"experiments/models/listener/{language}",
+        dirpath=f"experiments/models/{sub_dir}/{language}",
         filename="listener-{epoch:02d}-{val_loss:.2f}",
         save_top_k=1,
         monitor="val_loss",
@@ -85,13 +91,14 @@ def train_listener(
         accelerator="auto",
         devices=1,
         callbacks=callbacks + [early_stop_callback, checkpoint_callback],
-        enable_progress_bar=False, # Desactivamos la barra de PL para usar la nuestra si es necesario
-        default_root_dir=f"lightning_logs/experiment_listener_{language}"
+        enable_progress_bar=False, 
+        default_root_dir=f"lightning_logs/experiment_{sub_dir}_{language}"
     )
     
     # 4. Train
     if progress_callback:
-        progress_callback(0, f"Iniciando entrenamiento Listener ({language})...")
+        type_str = "Fonemas" if use_phonemes else "Palabras"
+        progress_callback(0, f"Iniciando entrenamiento Listener ({language}) [{type_str}]...")
         
     trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
     
@@ -104,7 +111,8 @@ def train_listener(
         # Guardar metadata
         meta_config = {
             "epochs": epochs, "lr": lr, "batch_size": batch_size,
-            "vocab": words, "language": language, "type": "listener"
+            "vocab": words, "language": language, "type": "listener",
+            "use_phonemes": use_phonemes
         }
         final_metrics = history_cb.history[-1] if history_cb.history else {}
         save_model_metadata(final_path, meta_config, final_metrics)
@@ -112,7 +120,7 @@ def train_listener(
         return str(final_path), history_cb.history
     else:
         # Fallback
-        save_dir = Path("experiments/models/listener")
+        save_dir = Path(f"experiments/models/{sub_dir}")
         save_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         final_path = save_dir / f"listener_{language}_{timestamp}.ckpt"
@@ -121,7 +129,8 @@ def train_listener(
         # Metadata
         meta_config = {
             "epochs": epochs, "lr": lr, "batch_size": batch_size,
-            "vocab": words, "language": language, "type": "listener"
+            "vocab": words, "language": language, "type": "listener",
+            "use_phonemes": use_phonemes
         }
         final_metrics = history_cb.history[-1] if history_cb.history else {}
         save_model_metadata(final_path, meta_config, final_metrics)
@@ -247,21 +256,26 @@ def train_reader(
     prediction_placeholder=None
 ) -> Tuple[str, List[Dict]]:
     """
-    Entrena un TinyReader.
+    Entrena un TinyReader. Soporta fases 'g2p', 'p2w', 'end_to_end'.
     """
     epochs = config.get('epochs', 20)
     lr = config.get('lr', 1e-3)
     batch_size = config.get('batch_size', 32)
-    w_mse = config.get('w_mse', 1.0)
-    w_cos = config.get('w_cos', 1.0)
+    w_dtw = config.get('w_dtw', 1.0)
     w_perceptual = config.get('w_perceptual', 0.1)
     
-    # 1. Data (Audio dataloaders provide the words/concepts)
+    use_two_stage = config.get('use_two_stage', False)
+    phoneme_listener_ckpt = config.get('phoneme_listener_ckpt', None)
+    training_phase = config.get('training_phase', 'end_to_end')
+    pretrained_speller_ckpt = config.get('pretrained_speller_ckpt', None)
+    
+    # 1. Data
     train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
         batch_size=batch_size, 
         num_workers=0, 
         seed=42,
-        target_language=language
+        target_language=language,
+        use_phonemes=False # Reader always trains on words (even if G2P phase uses phoneme targets internally generated)
     )
     words = train_ds.class_names
     
@@ -271,11 +285,34 @@ def train_reader(
         listener_checkpoint_path=listener_ckpt,
         recognizer_checkpoint_path=recognizer_ckpt,
         learning_rate=lr,
-        w_mse=w_mse,
-        w_cos=w_cos,
-        w_perceptual=w_perceptual
+        w_dtw=w_dtw,
+        w_perceptual=w_perceptual,
+        use_two_stage=use_two_stage,
+        phoneme_listener_checkpoint_path=phoneme_listener_ckpt,
+        training_phase=training_phase
     )
     
+    # Cargar pesos de Speller si se proporciona (para fase P2W)
+    if pretrained_speller_ckpt and Path(pretrained_speller_ckpt).exists():
+        print(f"Cargando pesos de Speller desde {pretrained_speller_ckpt}...")
+        try:
+            speller_ckpt = torch.load(pretrained_speller_ckpt, map_location=model.device)
+            state_dict = speller_ckpt['state_dict']
+            # Filtrar solo las keys de reader_g2p
+            g2p_weights = {k: v for k, v in state_dict.items() if "reader_g2p" in k}
+            if g2p_weights:
+                model.load_state_dict(g2p_weights, strict=False)
+                print(f"✅ Pesos de G2P cargados ({len(g2p_weights)} keys).")
+            
+            # También cargar phoneme_listener si está en el checkpoint del speller
+            ph_l_weights = {k.replace("phoneme_listener.", ""): v for k, v in state_dict.items() if "phoneme_listener" in k}
+            if ph_l_weights and hasattr(model, 'phoneme_listener'):
+                 model.phoneme_listener.load_state_dict(ph_l_weights)
+                 print("✅ Phoneme Listener actualizado desde Speller.")
+                 
+        except Exception as e:
+            print(f"⚠️ Error cargando pesos de Speller: {e}")
+
     # 3. Trainer
     history_cb = TrainingHistoryCallback()
     callbacks = [history_cb]
@@ -295,9 +332,12 @@ def train_reader(
         mode="min"
     )
 
+    # Nombre de archivo distintivo según fase
+    phase_suffix = f"_{training_phase}" if training_phase != "end_to_end" else ""
+    
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        dirpath=f"experiments/models/reader/{language}",
-        filename="reader-{epoch:02d}-{val_loss:.2f}",
+        dirpath=f"experiments/models/reader{phase_suffix}/{language}",
+        filename=f"reader{phase_suffix}-{{epoch:02d}}-{{val_loss:.2f}}",
         save_top_k=1,
         monitor="val_loss",
         mode="min"
@@ -309,12 +349,12 @@ def train_reader(
         devices=1,
         callbacks=callbacks + [early_stop_callback, checkpoint_callback],
         enable_progress_bar=False,
-        default_root_dir=f"lightning_logs/experiment_reader_{language}"
+        default_root_dir=f"lightning_logs/experiment_reader{phase_suffix}_{language}"
     )
     
     # 4. Train
     if progress_callback:
-        progress_callback(0, f"Iniciando entrenamiento Reader ({language})...")
+        progress_callback(0, f"Iniciando entrenamiento Reader ({language}) [{training_phase}]...")
         
     trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
     
@@ -327,12 +367,16 @@ def train_reader(
         # Metadata
         meta_config = {
             "epochs": epochs, "lr": lr, "batch_size": batch_size,
-            "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
+            "weights": {"dtw": w_dtw, "perceptual": w_perceptual},
             "listener_ckpt": listener_ckpt,
             "recognizer_ckpt": recognizer_ckpt,
             "language": language,
             "vocab": words,
-            "type": "reader"
+            "type": "reader",
+            "use_two_stage": use_two_stage,
+            "phoneme_listener_ckpt": phoneme_listener_ckpt,
+            "training_phase": training_phase,
+            "pretrained_speller_ckpt": pretrained_speller_ckpt
         }
         final_metrics = history_cb.history[-1] if history_cb.history else {}
         save_model_metadata(final_path, meta_config, final_metrics)
@@ -340,21 +384,25 @@ def train_reader(
         return str(final_path), history_cb.history
     else:
         # Fallback
-        save_dir = Path("experiments/models/reader")
+        save_dir = Path(f"experiments/models/reader{phase_suffix}")
         save_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        final_path = save_dir / f"reader_{language}_{timestamp}.ckpt"
+        final_path = save_dir / f"reader{phase_suffix}_{language}_{timestamp}.ckpt"
         trainer.save_checkpoint(final_path)
         
         # Metadata
         meta_config = {
             "epochs": epochs, "lr": lr, "batch_size": batch_size,
-            "weights": {"mse": w_mse, "cos": w_cos, "perceptual": w_perceptual},
+            "weights": {"dtw": w_dtw, "perceptual": w_perceptual},
             "listener_ckpt": listener_ckpt,
             "recognizer_ckpt": recognizer_ckpt,
             "language": language,
             "vocab": words,
-            "type": "reader"
+            "type": "reader",
+            "use_two_stage": use_two_stage,
+            "phoneme_listener_ckpt": phoneme_listener_ckpt,
+            "training_phase": training_phase,
+            "pretrained_speller_ckpt": pretrained_speller_ckpt
         }
         final_metrics = history_cb.history[-1] if history_cb.history else {}
         save_model_metadata(final_path, meta_config, final_metrics)

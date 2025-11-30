@@ -7,42 +7,43 @@ DICCIONARIOS_METADATA = {
     "tiny_kalulu_original": {
         "nombre": "TinySpeak Original - Kalulu (200 palabras)",
         "descripcion": "Vocabulario original del proyecto TinySpeak basado en el dataset Kalulu",
-        "archivo": "tiny_kalulu_original.txt"
+        "archivo": "tiny_kalulu_original"
     },
     "basico_español": {
         "nombre": "Básico Español (50 palabras)",
         "descripcion": "Vocabulario básico en español para principiantes",
-        "archivo": "basico_español.txt"
+        "archivo": "basico_español"
     },
     "colores_numeros": {
         "nombre": "Colores y Números (30 palabras)",
         "descripcion": "Vocabulario de colores básicos y números del 1 al 20",
-        "archivo": "colores_numeros.txt"
+        "archivo": "colores_numeros"
     },
     "animales": {
         "nombre": "Animales (40 palabras)",
         "descripcion": "Vocabulario de animales comunes",
-        "archivo": "animales.txt"
+        "archivo": "animales"
     },
     "casa_familia": {
         "nombre": "Casa y Familia (35 palabras)",
         "descripcion": "Vocabulario del hogar y relaciones familiares",
-        "archivo": "casa_familia.txt"
+        "archivo": "casa_familia"
     },
     "acciones_verbos": {
         "nombre": "Acciones y Verbos (45 palabras)",
         "descripcion": "Verbos y acciones comunes",
-        "archivo": "acciones_verbos.txt"
+        "archivo": "acciones_verbos"
     },
     "tiny_phones_original": {
         "nombre": "TinySpeak Original - Phones (200 palabras)",
         "descripcion": "Vocabulario original del proyecto TinySpeak basado en dataset de phonemas",
-        "archivo": "tiny_phones_original.txt"
+        "archivo": "tiny_phones_original",
+        "carpeta": "fonemas" 
     },
     "comida_bebida": {
         "nombre": "Comida y Bebida (40 palabras)",
         "descripcion": "Vocabulario de alimentos y bebidas",
-        "archivo": "comida_bebida.txt"
+        "archivo": "comida_bebida"
     }
 }
 
@@ -59,15 +60,14 @@ def get_diccionario_predefinido(nombre_diccionario, idioma='es'):
         return None
     
     # Construir nombre de archivo según idioma
-    filename = metadata["archivo"]
-    if idioma and idioma != 'es':
-        # Asumimos que los archivos traducidos tienen sufijo _en.txt, _fr.txt
-        # ej: animales.txt -> animales_en.txt
-        filename = filename.replace(".txt", f"_{idioma}.txt")
+    # Construir nombre de archivo según idioma (siempre explícito)
+    base_filename = metadata["archivo"]
+    filename = f"{base_filename}_{idioma}.txt"
         
     # Construir ruta al archivo
     base_dir = Path(__file__).parent
-    archivo_path = base_dir / "data" / "diccionarios" / filename
+    carpeta = metadata.get("carpeta", "diccionarios")
+    archivo_path = base_dir / "data" / carpeta / filename
     
     palabras = []
     try:

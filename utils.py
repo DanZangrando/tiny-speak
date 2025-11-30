@@ -6,6 +6,7 @@ import torchaudio
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+import json
 import subprocess
 from transformers import Wav2Vec2Model, Wav2Vec2Config
 import os
@@ -21,7 +22,35 @@ from pydub import AudioSegment
 from pydub.effects import normalize
 import random
 from datetime import datetime
-from training.config import load_master_dataset_config
+
+def tokenize_graphemes(word, available_graphemes):
+    """
+    Tokeniza una palabra en grafemas, priorizando los más largos (greedy matching).
+    Ejemplo: "chancho" -> ['ch', 'a', 'n', 'ch', 'o'] si 'ch' está en available_graphemes.
+    """
+    if not available_graphemes:
+        return list(word)
+        
+    # Ordenar grafemas por longitud descendente para matching greedy
+    sorted_graphemes = sorted(available_graphemes, key=len, reverse=True)
+    
+    tokens = []
+    i = 0
+    while i < len(word):
+        match_found = False
+        for grapheme in sorted_graphemes:
+            if word.startswith(grapheme, i):
+                tokens.append(grapheme)
+                i += len(grapheme)
+                match_found = True
+                break
+        
+        if not match_found:
+            # Si no coincide con ningún grafema conocido, tomar el carácter individual
+            tokens.append(word[i])
+            i += 1
+            
+    return tokens
 
 def encontrar_device():
     if torch.cuda.is_available():
@@ -174,42 +203,14 @@ def plot_logits(logits, words, title="Predicciones"):
     return fig
 
 def ensure_data_downloaded():
-    """Asegura que los datos estén descargados"""
+    """
+    Retorna la ruta de datos.
+    NOTA: Se ha deshabilitado la descarga automática a petición del usuario.
+    """
     from pathlib import Path
-    import gdown
-    import tarfile
     
     data_path = Path("data")
-    data_path.mkdir(exist_ok=True)
-    
-    # Archivos a descargar
-    files_to_download = {
-        "tiny-kalulu-200.tar.xz": "1ItYeR5WdJVtXYbwUhbeKqvaKXGFAmN_4",
-        "tiny-phones-200.tar.xz": "1V81aQxnww5nWNcDQJHbGmiijT9Lz-mgF",
-        "tiny-emnist-26.tar.xz": "1fRUtxB05-77koJ9ZpamWk-LWu_NP0aR8",
-    }
-    
-    for filename, file_id in files_to_download.items():
-        tar_path = Path(filename)
-        extracted_path = data_path / filename.replace(".tar.xz", "")
-        
-        # Descargar si no existe el archivo comprimido
-        if not tar_path.exists():
-            print(f"Descargando {filename}...")
-            try:
-                gdown.download(id=file_id, output=str(tar_path))
-            except Exception as e:
-                print(f"Error descargando {filename}: {e}")
-                continue
-        
-        # Extraer si no existe la carpeta
-        if not extracted_path.exists():
-            print(f"Extrayendo {filename}...")
-            try:
-                with tarfile.open(tar_path, mode="r:xz") as tar:
-                    tar.extractall(path=data_path)
-            except Exception as e:
-                print(f"Error extrayendo {filename}: {e}")
+    # data_path.mkdir(exist_ok=True)
     
     return data_path
 
@@ -356,36 +357,46 @@ def list_checkpoints(model_type: str) -> list[dict]:
     """
     import json
     from datetime import datetime
+    from pathlib import Path
     
     models_dir = Path.cwd() / "models" / model_type
-    if not models_dir.exists():
+    checkpoints_dir = Path.cwd() / "models" / f"{model_type}_checkpoints"
+    
+    dirs_to_search = []
+    if models_dir.exists():
+        dirs_to_search.append(models_dir)
+    if checkpoints_dir.exists():
+        dirs_to_search.append(checkpoints_dir)
+        
+    if not dirs_to_search:
         return []
         
     checkpoints = []
-    for ckpt_path in models_dir.glob("*.ckpt"):
-        meta_path = ckpt_path.with_suffix(".ckpt.meta.json")
-        meta = {}
-        if meta_path.exists():
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-            except:
-                pass
-        
-        # Si no hay metadata, intentar inferir del nombre
-        if not meta:
-            meta = {
-                "timestamp": ckpt_path.stat().st_mtime,
-                "config": {}
-            }
+    for d in dirs_to_search:
+        for ckpt_path in d.glob("*.ckpt"):
+            meta_path = ckpt_path.with_suffix(".ckpt.meta.json")
+            meta = {}
+            if meta_path.exists():
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except Exception:
+                    pass
             
-        checkpoints.append({
-            "path": str(ckpt_path),
-            "filename": ckpt_path.name,
-            "timestamp": meta.get("timestamp", 0),
-            "meta": meta
-        })
-        
+            # Si no hay metadata, intentar inferir del nombre
+            if not meta:
+                meta = {
+                    "timestamp": ckpt_path.stat().st_mtime,
+                    "config": {}
+                }
+            
+            checkpoints.append({
+                "path": str(ckpt_path),
+                "filename": ckpt_path.name,
+                "timestamp": meta.get("timestamp", 0),
+                "meta": meta
+            })
+            
     # Ordenar por fecha descendente
     checkpoints.sort(key=lambda x: x["timestamp"], reverse=True)
     return checkpoints
@@ -539,24 +550,33 @@ class ReaderPredictionCallback(pl.Callback):
 
     def on_validation_epoch_end(self, trainer, pl_module):
         try:
-            # Obtener predicciones
-            words, logits = pl_module.get_predictions(self.batch)
-            
-            # Procesar resultados
-            probs = torch.softmax(logits, dim=-1)
-            top1_probs, top1_indices = torch.max(probs, dim=-1)
-            
-            predicted_words = [pl_module.class_names[idx] for idx in top1_indices]
+            # Obtener predicciones detalladas
+            words, predictions, confidences = pl_module.get_predictions(self.batch)
             
             # Crear DataFrame para visualización
             results = []
             for i in range(min(len(words), 10)): # Mostrar max 10 ejemplos
-                is_correct = words[i] == predicted_words[i]
-                icon = "✅" if is_correct else "❌"
+                real = words[i]
+                pred = predictions[i]
+                conf = confidences[i]
+                
+                # Determinar si es correcto (si es G2P, comparamos fonemas idealmente, pero aquí solo mostramos)
+                # Para G2P, la "Real" es la palabra, la "Predicción" son fonemas. No son directamente comparables por igualdad de string.
+                # Si es P2W, ambos son palabras.
+                
+                is_correct = False
+                if pl_module.training_phase == "g2p":
+                    # En G2P no marcamos correcto/incorrecto fácilmente aquí sin re-calcular fonemas reales
+                    # Simplemente mostramos el icono de información
+                    icon = "ℹ️" 
+                else:
+                    is_correct = real == pred
+                    icon = "✅" if is_correct else "❌"
+                
                 results.append({
-                    "Real": words[i],
-                    "Predicción": predicted_words[i],
-                    "Confianza": f"{top1_probs[i].item():.2%}",
+                    "Input (Grafemas)": real,
+                    "Predicción": pred,
+                    "Confianza": f"{conf:.2%}",
                     "Estado": icon
                 })
                 
@@ -566,10 +586,6 @@ class ReaderPredictionCallback(pl.Callback):
             with self.placeholder.container():
                 st.markdown(f"### 🔮 Predicciones (Época {trainer.current_epoch})")
                 st.dataframe(df, hide_index=True, use_container_width=True)
-                
-                # Métrica resumen
-                acc = sum([1 for r in results if r["Estado"] == "✅"]) / len(results)
-                st.progress(acc, text=f"Precisión en Batch de Muestra: {acc:.1%}")
                 
         except Exception as e:
             print(f"Error en visualización: {e}")
@@ -588,7 +604,24 @@ def change_speed(audio_segment, speed=1.0):
 def generar_audio_gtts(texto, idioma='es', velocidad=1.0):
     """Genera audio usando Google Text-to-Speech (gTTS)"""
     try:
-        tts = gTTS(text=texto, lang=idioma, slow=False)
+        # Mapeo de fonemas a representaciones que suenan mejor en gTTS
+        # Esto evita que diga el nombre de la letra (ej. "Erre" en lugar de /r/)
+        phoneme_map = {
+            'r': 'rrr',
+            's': 'sss',
+            'f': 'fff',
+            'm': 'mmm',
+            'n': 'nnn',
+            'l': 'lll',
+            'z': 'zzz'
+        }
+        
+        # Si el texto es una sola letra y está en el mapa, usar la versión extendida
+        texto_a_sintetizar = texto
+        if len(texto) == 1 and texto.lower() in phoneme_map:
+            texto_a_sintetizar = phoneme_map[texto.lower()]
+            
+        tts = gTTS(text=texto_a_sintetizar, lang=idioma, slow=False)
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             tts.save(temp_file.name)
             audio = AudioSegment.from_mp3(temp_file.name)
@@ -604,10 +637,10 @@ def generar_audio_gtts(texto, idioma='es', velocidad=1.0):
         st.error(f"Error generando audio con gTTS: {e}")
         return None
 
-def save_audio_file(audio_bytes, dataset_name, word, filename):
+def save_audio_file(audio_bytes, dataset_name, word, filename, base_folder="audios"):
     """Guarda el archivo de audio en el sistema de archivos"""
     try:
-        base_dir = Path.cwd() / "data" / "audios" / dataset_name / word
+        base_dir = Path.cwd() / "data" / base_folder / dataset_name / word
         base_dir.mkdir(parents=True, exist_ok=True)
         file_path = base_dir / filename
         with open(file_path, 'wb') as f:
@@ -673,7 +706,7 @@ def aplicar_variaciones_audio(audio_bytes, variacion_tipo, config_rangos=None):
         st.error(f"Error aplicando variación {variacion_tipo}: {e}")
         return None, {}
 
-def generar_variaciones_completas(texto, idioma, num_variaciones, metodo_sintesis='gtts', dataset_name='custom_dataset', rangos=None):
+def generar_variaciones_completas(texto, idioma, num_variaciones, metodo_sintesis='gtts', dataset_name='custom_dataset', rangos=None, base_folder="audios"):
     """Genera audio original y variaciones."""
     resultados = []
     # st.write(f"🎵 Generando: {texto} ({idioma})") # Comentado para no saturar UI en batch
@@ -683,28 +716,40 @@ def generar_variaciones_completas(texto, idioma, num_variaciones, metodo_sintesi
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename_original = f"{texto}_original_{timestamp}.wav"
-    file_path_original = save_audio_file(audio_base, dataset_name, texto, filename_original)
+    file_path_original = save_audio_file(audio_base, dataset_name, texto, filename_original, base_folder)
+    
+    if not file_path_original: return []
     
     duracion_ms = len(AudioSegment.from_wav(io.BytesIO(audio_base)))
+    
     resultados.append({
-        'file_path': file_path_original, 'duracion_ms': duracion_ms, 'timestamp': datetime.now().isoformat(),
-        'tipo': 'original', 'metodo_sintesis': metodo_sintesis, 'pitch_factor': 1.0, 'speed_factor': 1.0, 'volume_factor': 1.0
+        'file_path': file_path_original,
+        'duracion_ms': duracion_ms,
+        'timestamp': datetime.now().isoformat(),
+        'tipo': 'original',
+        'metodo_sintesis': metodo_sintesis,
+        'pitch_factor': 1.0, 'speed_factor': 1.0, 'volume_factor': 1.0
     })
     
-    tipos_variacion = ['pitch_alto', 'pitch_bajo', 'rapido', 'lento', 'fuerte', 'suave']
+    # Generar variaciones
+    variaciones_tipos = ['pitch_alto', 'pitch_bajo', 'rapido', 'lento', 'fuerte', 'suave']
     
-    config = load_master_dataset_config()
-    rangos = config.get('configuracion_audio', {}).get('rangos', {
-        'pitch': [0.8, 1.3],
-        'speed': [0.7, 1.4],
-        'volume': [0.8, 1.2]
-    })    
+    # Load ranges if not provided
+    if rangos is None:
+        config = load_master_dataset_config()
+        rangos = config.get('configuracion_audio', {}).get('rangos', {
+            'pitch': [0.8, 1.3],
+            'speed': [0.7, 1.4],
+            'volume': [0.8, 1.2]
+        })
+        
     for i in range(num_variaciones):
-        tipo_var = random.choice(tipos_variacion)
+        tipo_var = random.choice(variaciones_tipos)
         audio_variado, params = aplicar_variaciones_audio(audio_base, tipo_var, rangos)
+        
         if audio_variado:
             filename_var = f"{texto}_{tipo_var}_{i}_{timestamp}.wav"
-            file_path_var = save_audio_file(audio_variado, dataset_name, texto, filename_var)
+            file_path_var = save_audio_file(audio_variado, dataset_name, texto, filename_var, base_folder)
             duracion_var_ms = len(AudioSegment.from_wav(io.BytesIO(audio_variado)))
             resultados.append({
                 'file_path': file_path_var, 'duracion_ms': duracion_var_ms, 'timestamp': datetime.now().isoformat(),
@@ -722,3 +767,116 @@ def get_language_letters(language='es'):
         'de': list('abcdefghijklmnopqrstuvwxyzäöüß'),  # Alemán básico
     }
     return language_alphabets.get(language, language_alphabets['es'])
+
+def get_phoneme_inventory(language='es'):
+    """Carga el inventario de fonemas para un idioma."""
+    try:
+        # Usar ruta relativa al archivo utils.py para robustez
+        base_path = Path(__file__).parent
+        json_path = base_path / "data" / "fonemas" / "phonemes.json"
+        
+        if not json_path.exists():
+            # Fallback a ruta relativa al cwd si la estructura es diferente
+            json_path = Path("data/fonemas/phonemes.json")
+            
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get(language, [])
+    except Exception as e:
+        print(f"Error loading phoneme inventory: {e}")
+        return []
+
+def get_phonemes_from_word(word, language='es'):
+    """
+    Convierte una palabra en una lista de fonemas usando matching simple (greedy).
+    Prioriza digrafos sobre letras individuales.
+    """
+    inventory = get_phoneme_inventory(language)
+    # Ordenar inventario por longitud descendente para priorizar digrafos (ej. 'ch' antes que 'c')
+    inventory = sorted(inventory, key=len, reverse=True)
+    
+    phonemes = []
+    i = 0
+    word = word.lower()
+    while i < len(word):
+        match = False
+        # Intentar coincidir con fonemas del inventario
+        for p in inventory:
+            if word[i:].startswith(p):
+                phonemes.append(p)
+                i += len(p)
+                match = True
+                break
+        
+        if not match:
+            # Si no coincide (ej. espacio o caracter raro), saltar o agregar como tal
+            # Por ahora saltamos caracteres desconocidos
+            i += 1
+            
+    return phonemes
+
+# ==========================================
+# Soft-DTW Implementation (PyTorch)
+# ==========================================
+class SoftDTW(torch.nn.Module):
+    """
+    Implementación de Soft-DTW (Cuturi & Blondel, 2017) en PyTorch puro.
+    Calcula la pérdida de alineamiento temporal diferenciable entre secuencias.
+    """
+    def __init__(self, gamma=1.0, normalize=False):
+        super(SoftDTW, self).__init__()
+        self.gamma = gamma
+        self.normalize = normalize
+
+    def forward(self, x, y):
+        """
+        Calcula Soft-DTW loss.
+        x: (B, N, D) - Secuencia 1
+        y: (B, M, D) - Secuencia 2
+        """
+        B, N, D = x.size()
+        M = y.size(1)
+        
+        # Matriz de distancias (Euclidianas al cuadrado)
+        # x: (B, N, D) -> (B, N, 1, D)
+        # y: (B, M, D) -> (B, 1, M, D)
+        # dist: (B, N, M)
+        dist = torch.sum((x.unsqueeze(2) - y.unsqueeze(1)) ** 2, dim=3)
+        
+        # Soft-DTW forward pass
+        loss = self._soft_dtw(dist, self.gamma)
+        
+        if self.normalize:
+            # Normalización para que dtw(x, x) = 0
+            loss_x = self._soft_dtw(torch.sum((x.unsqueeze(2) - x.unsqueeze(1)) ** 2, dim=3), self.gamma)
+            loss_y = self._soft_dtw(torch.sum((y.unsqueeze(2) - y.unsqueeze(1)) ** 2, dim=3), self.gamma)
+            return (loss - 0.5 * (loss_x + loss_y)).mean()
+            
+        return loss.mean()
+
+    def _soft_dtw(self, D, gamma):
+        B, N, M = D.size()
+        device = D.device
+        
+        # Matriz de costos acumulados R
+        # R[b, i, j] = softmin(R[b, i-1, j], R[b, i, j-1], R[b, i-1, j-1]) + D[b, i, j]
+        
+        # Inicialización con infinito
+        R = torch.ones((B, N + 2, M + 2), device=device) * 1e10
+        R[:, 0, 0] = 0
+        
+        # Iteración DP (Dynamic Programming)
+        # Nota: Esto es lento en Python puro para secuencias largas, pero aceptable para "Tiny" (N, M < 100)
+        for j in range(1, M + 1):
+            for i in range(1, N + 1):
+                r0 = -R[:, i - 1, j - 1] / gamma
+                r1 = -R[:, i - 1, j] / gamma
+                r2 = -R[:, i, j - 1] / gamma
+                
+                # LogSumExp trick para softmin
+                rmax = torch.max(torch.max(r0, r1), r2)
+                softmin = -gamma * (rmax + torch.log(torch.exp(r0 - rmax) + torch.exp(r1 - rmax) + torch.exp(r2 - rmax)))
+                
+                R[:, i, j] = D[:, i - 1, j - 1] + softmin
+                
+        return R[:, N, M]
