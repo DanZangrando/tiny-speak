@@ -1,0 +1,212 @@
+{
+  "id": "36fb4f98",
+  "name": "Exp_Transparencia_20251130",
+  "languages": [
+    "es",
+    "en",
+    "fr"
+  ],
+  "config": {
+    "epochs_eyes": 50,
+    "epochs_ears": 50,
+    "epochs_speller": 50,
+    "epochs_reader": 50
+  },
+  "models": {
+    "es": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/es/recognizer-epoch=17-val_loss=0.07.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/es/listener-epoch=47-val_loss=0.91.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/es/listener-epoch=46-val_loss=1.01.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/es/reader_g2p-epoch=49-val_loss=459.63.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/es/reader_p2w-epoch=48-val_loss=2626.09.ckpt"
+    },
+    "en": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/en/recognizer-epoch=24-val_loss=0.09.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/en/listener-epoch=36-val_loss=0.73.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/en/listener-epoch=49-val_loss=1.29.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/en/reader_g2p-epoch=47-val_loss=679.90.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/en/reader_p2w-epoch=49-val_loss=2785.29.ckpt"
+    },
+    "fr": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/fr/recognizer-epoch=18-val_loss=0.18.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/fr/listener-epoch=49-val_loss=0.92.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/fr/listener-epoch=46-val_loss=0.43.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/fr/reader_g2p-epoch=49-val_loss=443.14.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/fr/reader_p2w-epoch=46-val_loss=1996.13.ckpt"
+    }
+  },
+  "metrics": {
+    "es": {
+      "eyes": {
+        "val_loss": 0.07748851180076599,
+        "val_top1": 99.0740737915039,
+        "val_top3": 100.0,
+        "val_top5": 100.0,
+        "train_loss": 0.019243795424699783,
+        "train_top1": 100.0,
+        "train_top3": 100.0,
+        "train_top5": 100.0,
+        "epoch": 27
+      },
+      "ears_phonemes": {
+        "val_loss": 0.9561879634857178,
+        "val_top1": 68.45394134521484,
+        "val_top3": 91.73760986328125,
+        "val_top5": 95.06385040283203,
+        "train_loss": 0.5373871326446533,
+        "train_top1": 78.07470703125,
+        "train_top3": 98.71310424804688,
+        "train_top5": 100.0,
+        "epoch": 49
+      },
+      "ears_words": {
+        "val_loss": 1.0461242198944092,
+        "val_top1": 75.31245422363281,
+        "val_top3": 86.43313598632812,
+        "val_top5": 92.18152618408203,
+        "train_loss": 0.5520555377006531,
+        "train_top1": 83.67488098144531,
+        "train_top3": 96.82785034179688,
+        "train_top5": 99.07701873779297,
+        "epoch": 49
+      },
+      "speller": {
+        "train_g2p_perceptual": 4.373061180114746,
+        "train_g2p_dtw": 518.4351806640625,
+        "train_loss": 518.8724975585938,
+        "train_phoneme_acc": 0.23076923191547394,
+        "val_g2p_perceptual": 4.367477893829346,
+        "val_g2p_dtw": 459.1889953613281,
+        "val_loss": 459.625732421875,
+        "val_phoneme_acc": 0.25882086157798767,
+        "epoch": 49
+      },
+      "reader": {
+        "train_loss": 2033.278076171875,
+        "train_dtw": 2033.259765625,
+        "train_perceptual": 0.18312211334705353,
+        "train_acc": 1.0,
+        "val_loss": 2681.63818359375,
+        "val_dtw": 2681.6171875,
+        "val_perceptual": 0.2089625597000122,
+        "val_acc": 0.9922997355461121,
+        "epoch": 49
+      }
+    },
+    "en": {
+      "eyes": {
+        "val_loss": 1.0022156238555908,
+        "val_top1": 72.11538696289062,
+        "val_top3": 91.34615325927734,
+        "val_top5": 93.26923370361328,
+        "train_loss": 0.08027882874011993,
+        "train_top1": 99.0842514038086,
+        "train_top3": 100.0,
+        "train_top5": 100.0,
+        "epoch": 34
+      },
+      "ears_phonemes": {
+        "val_loss": 0.7419912815093994,
+        "val_top1": 75.47669219970703,
+        "val_top3": 95.23304748535156,
+        "val_top5": 100.0,
+        "train_loss": 0.29375970363616943,
+        "train_top1": 90.22872924804688,
+        "train_top3": 99.53047180175781,
+        "train_top5": 100.0,
+        "epoch": 46
+      },
+      "ears_words": {
+        "val_loss": 1.285179615020752,
+        "val_top1": 55.026371002197266,
+        "val_top3": 88.3409194946289,
+        "val_top5": 94.89603424072266,
+        "train_loss": 1.1045434474945068,
+        "train_top1": 65.41757202148438,
+        "train_top3": 92.2157211303711,
+        "train_top5": 96.95096588134766,
+        "epoch": 49
+      },
+      "speller": {
+        "train_g2p_perceptual": 6.233213901519775,
+        "train_g2p_dtw": 717.6556396484375,
+        "train_loss": 718.2789306640625,
+        "train_phoneme_acc": 0.05982906371355057,
+        "val_g2p_perceptual": 6.030354022979736,
+        "val_g2p_dtw": 683.0281982421875,
+        "val_loss": 683.6311645507812,
+        "val_phoneme_acc": 0.07096917927265167,
+        "epoch": 49
+      },
+      "reader": {
+        "train_loss": 3441.365234375,
+        "train_dtw": 3441.15234375,
+        "train_perceptual": 2.128493547439575,
+        "train_acc": 0.375,
+        "val_loss": 2785.29248046875,
+        "val_dtw": 2785.0830078125,
+        "val_perceptual": 2.093677520751953,
+        "val_acc": 0.28661349415779114,
+        "epoch": 49
+      }
+    },
+    "fr": {
+      "eyes": {
+        "val_loss": 0.8710720539093018,
+        "val_top1": 67.30769348144531,
+        "val_top3": 93.26923370361328,
+        "val_top5": 97.11538696289062,
+        "train_loss": 0.11283515393733978,
+        "train_top1": 98.53479766845703,
+        "train_top3": 100.0,
+        "train_top5": 100.0,
+        "epoch": 28
+      },
+      "ears_phonemes": {
+        "val_loss": 0.9164696931838989,
+        "val_top1": 69.9904556274414,
+        "val_top3": 88.6707763671875,
+        "val_top5": 96.5096435546875,
+        "train_loss": 0.957838773727417,
+        "train_top1": 64.7103500366211,
+        "train_top3": 89.2903823852539,
+        "train_top5": 97.23372650146484,
+        "epoch": 49
+      },
+      "ears_words": {
+        "val_loss": 0.9030201435089111,
+        "val_top1": 69.08865356445312,
+        "val_top3": 94.31660461425781,
+        "val_top5": 95.0557861328125,
+        "train_loss": 0.7026216983795166,
+        "train_top1": 75.90940856933594,
+        "train_top3": 95.67606353759766,
+        "train_top5": 98.46765899658203,
+        "epoch": 49
+      },
+      "speller": {
+        "train_g2p_perceptual": 5.0057454109191895,
+        "train_g2p_dtw": 377.7781982421875,
+        "train_loss": 378.2787780761719,
+        "train_phoneme_acc": 0.03100775182247162,
+        "val_g2p_perceptual": 5.290117263793945,
+        "val_g2p_dtw": 442.609375,
+        "val_loss": 443.1383972167969,
+        "val_phoneme_acc": 0.02755136415362358,
+        "epoch": 49
+      },
+      "reader": {
+        "train_loss": 1397.1761474609375,
+        "train_dtw": 1397.1328125,
+        "train_perceptual": 0.43386343121528625,
+        "train_acc": 0.875,
+        "val_loss": 2087.706787109375,
+        "val_dtw": 2087.616455078125,
+        "val_perceptual": 0.904699981212616,
+        "val_acc": 0.7794806957244873,
+        "epoch": 49
+      }
+    }
+  },
+  "timestamp": "2025-11-30T23:53:30.750956"
+}

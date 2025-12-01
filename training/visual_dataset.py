@@ -148,14 +148,11 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
                 if letter.lower() not in allowed_letters:
                     continue
                 
-                # 2. Filtrar imágenes: Aceptar idioma específico, 'dataset' (genérico) o None (legacy)
-                valid_entries = [
-                    e for e in entries 
-                    if e.get('language') == target_language or 
-                       e.get('language') == 'dataset' or
-                       e.get('language') is None or
-                       (e.get('metadata', {}).get('language') == target_language)
-                ]
+                # 2. Filtrar imágenes:
+                # RELAXED: Aceptamos todas las imágenes si la letra es válida para el idioma.
+                # Esto permite compartir datasets visuales (ej. 'a' de español sirve para inglés).
+                valid_entries = entries
+                
                 if valid_entries:
                     filtered_generated[letter] = valid_entries
             generated = filtered_generated

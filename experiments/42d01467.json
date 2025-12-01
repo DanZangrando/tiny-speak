@@ -1,0 +1,212 @@
+{
+  "id": "42d01467",
+  "name": "Exp_Transparencia_20251130",
+  "languages": [
+    "es",
+    "en",
+    "fr"
+  ],
+  "config": {
+    "epochs_eyes": 5,
+    "epochs_ears": 5,
+    "epochs_speller": 5,
+    "epochs_reader": 5
+  },
+  "models": {
+    "es": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/es/recognizer-epoch=04-val_loss=1.42.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/es/listener-epoch=04-val_loss=3.28.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/es/listener-epoch=04-val_loss=3.65.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/es/reader_g2p-epoch=04-val_loss=21.83.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/es/reader_p2w-epoch=04-val_loss=29.81.ckpt"
+    },
+    "en": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/en/recognizer-epoch=03-val_loss=1.98.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/en/listener-epoch=04-val_loss=3.43.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/en/listener-epoch=04-val_loss=3.67.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/en/reader_g2p-epoch=04-val_loss=99.04.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/en/reader_p2w-epoch=04-val_loss=14.76.ckpt"
+    },
+    "fr": {
+      "eyes": "/home/daniel/Proyectos/tiny_speak/experiments/models/recognizer/fr/recognizer-epoch=03-val_loss=1.95.ckpt",
+      "ears_phonemes": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener_phonemes/fr/listener-epoch=04-val_loss=3.41.ckpt",
+      "ears_words": "/home/daniel/Proyectos/tiny_speak/experiments/models/listener/fr/listener-epoch=03-val_loss=3.68.ckpt",
+      "speller": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_g2p/fr/reader_g2p-epoch=04-val_loss=101.78.ckpt",
+      "reader": "/home/daniel/Proyectos/tiny_speak/experiments/models/reader_p2w/fr/reader_p2w-epoch=04-val_loss=10.56.ckpt"
+    }
+  },
+  "metrics": {
+    "es": {
+      "eyes": {
+        "val_loss": 1.4166936874389648,
+        "val_top1": 63.88888931274414,
+        "val_top3": 85.18518829345703,
+        "val_top5": 92.59259033203125,
+        "train_loss": 1.3273907899856567,
+        "train_top1": 71.78130340576172,
+        "train_top3": 94.00352478027344,
+        "train_top5": 97.00176239013672,
+        "epoch": 4
+      },
+      "ears_phonemes": {
+        "val_loss": 3.280226707458496,
+        "val_top1": 6.865315914154053,
+        "val_top3": 18.666780471801758,
+        "val_top5": 28.645496368408203,
+        "train_loss": 3.453983783721924,
+        "train_top1": 4.630842685699463,
+        "train_top3": 9.155495643615723,
+        "train_top5": 19.410579681396484,
+        "epoch": 4
+      },
+      "ears_words": {
+        "val_loss": 3.6523890495300293,
+        "val_top1": 5.5262770652771,
+        "val_top3": 13.73870849609375,
+        "val_top5": 16.800935745239258,
+        "train_loss": 3.725787401199341,
+        "train_top1": 2.763683557510376,
+        "train_top3": 5.047478199005127,
+        "train_top5": 12.307071685791016,
+        "epoch": 4
+      },
+      "speller": {
+        "train_g2p_perceptual": 3.5010390281677246,
+        "train_g2p_dtw": 21.798263549804688,
+        "train_loss": 22.148366928100586,
+        "train_phoneme_acc": 0.0,
+        "val_g2p_perceptual": 3.4639453887939453,
+        "val_g2p_dtw": 21.480976104736328,
+        "val_loss": 21.827367782592773,
+        "val_phoneme_acc": 0.011435491964221,
+        "epoch": 4
+      },
+      "reader": {
+        "train_loss": 30.405654907226562,
+        "train_dtw": 30.035381317138672,
+        "train_perceptual": 3.702730178833008,
+        "train_acc": 0.0416666679084301,
+        "val_loss": 29.807825088500977,
+        "val_dtw": 29.440391540527344,
+        "val_perceptual": 3.674347162246704,
+        "val_acc": 0.055262770503759384,
+        "epoch": 4
+      }
+    },
+    "en": {
+      "eyes": {
+        "val_loss": 2.1952474117279053,
+        "val_top1": 28.846153259277344,
+        "val_top3": 51.92307662963867,
+        "val_top5": 65.38461303710938,
+        "train_loss": 1.5695563554763794,
+        "train_top1": 63.5531120300293,
+        "train_top3": 89.010986328125,
+        "train_top5": 94.32234191894531,
+        "epoch": 4
+      },
+      "ears_phonemes": {
+        "val_loss": 3.428133010864258,
+        "val_top1": 4.76694917678833,
+        "val_top3": 16.94915199279785,
+        "val_top5": 20.07415199279785,
+        "train_loss": 3.4355621337890625,
+        "train_top1": 4.681779384613037,
+        "train_top3": 14.89468002319336,
+        "train_top5": 21.144878387451172,
+        "epoch": 4
+      },
+      "ears_words": {
+        "val_loss": 3.670161008834839,
+        "val_top1": 2.134702205657959,
+        "val_top3": 8.083852767944336,
+        "val_top5": 13.110223770141602,
+        "train_loss": 3.707911491394043,
+        "train_top1": 1.8615608215332031,
+        "train_top3": 5.895606994628906,
+        "train_top5": 11.586883544921875,
+        "epoch": 4
+      },
+      "speller": {
+        "train_g2p_perceptual": 3.431891441345215,
+        "train_g2p_dtw": 99.72702026367188,
+        "train_loss": 100.07020568847656,
+        "train_phoneme_acc": 0.051724135875701904,
+        "val_g2p_perceptual": 3.4476799964904785,
+        "val_g2p_dtw": 98.70005798339844,
+        "val_loss": 99.04483032226562,
+        "val_phoneme_acc": 0.03782761096954346,
+        "epoch": 4
+      },
+      "reader": {
+        "train_loss": 16.033021926879883,
+        "train_dtw": 15.663887023925781,
+        "train_perceptual": 3.6913468837738037,
+        "train_acc": 0.0,
+        "val_loss": 14.75888729095459,
+        "val_dtw": 14.391533851623535,
+        "val_perceptual": 3.673530340194702,
+        "val_acc": 0.02134702168405056,
+        "epoch": 4
+      }
+    },
+    "fr": {
+      "eyes": {
+        "val_loss": 2.1673684120178223,
+        "val_top1": 34.61538314819336,
+        "val_top3": 56.730770111083984,
+        "val_top5": 73.07691955566406,
+        "train_loss": 1.5279027223587036,
+        "train_top1": 66.66666412353516,
+        "train_top3": 93.22344207763672,
+        "train_top5": 97.43589782714844,
+        "epoch": 4
+      },
+      "ears_phonemes": {
+        "val_loss": 3.4055659770965576,
+        "val_top1": 3.4903597831726074,
+        "val_top3": 14.274054527282715,
+        "val_top5": 24.15378189086914,
+        "train_loss": 3.563911199569702,
+        "train_top1": 2.345146894454956,
+        "train_top3": 8.747628211975098,
+        "train_top5": 15.790518760681152,
+        "epoch": 4
+      },
+      "ears_words": {
+        "val_loss": 3.7033069133758545,
+        "val_top1": 1.4783785343170166,
+        "val_top3": 5.3425679206848145,
+        "val_top5": 12.2742280960083,
+        "train_loss": 3.7217929363250732,
+        "train_top1": 1.1913644075393677,
+        "train_top3": 6.015739917755127,
+        "train_top5": 10.118473052978516,
+        "epoch": 4
+      },
+      "speller": {
+        "train_g2p_perceptual": 3.626373052597046,
+        "train_g2p_dtw": 132.256591796875,
+        "train_loss": 132.61923217773438,
+        "train_phoneme_acc": 0.06923077255487442,
+        "val_g2p_perceptual": 3.6312339305877686,
+        "val_g2p_dtw": 101.41577911376953,
+        "val_loss": 101.77889251708984,
+        "val_phoneme_acc": 0.02677990309894085,
+        "epoch": 4
+      },
+      "reader": {
+        "train_loss": 12.340629577636719,
+        "train_dtw": 11.970014572143555,
+        "train_perceptual": 3.7061545848846436,
+        "train_acc": 0.0416666679084301,
+        "val_loss": 10.555011749267578,
+        "val_dtw": 10.187063217163086,
+        "val_perceptual": 3.6794891357421875,
+        "val_acc": 0.014783785678446293,
+        "epoch": 4
+      }
+    }
+  },
+  "timestamp": "2025-11-30T22:16:11.177416"
+}
