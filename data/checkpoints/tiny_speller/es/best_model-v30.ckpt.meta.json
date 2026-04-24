@@ -1,0 +1,120 @@
+{
+  "timestamp": 1776729901.7728877,
+  "date": "2026-04-20 21:05:01",
+  "config": {
+    "epochs": 5,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "structural_mse": 0.1
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/es/best_model.ckpt",
+    "language": "es",
+    "classes": [
+      "a",
+      "b",
+      "c",
+      "ch",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "ll",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "rr",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "ñ"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 0.875,
+    "train_g2p_structural_mse": 0.05122468248009682,
+    "train_g2p_categorical_ce": 125000000.0,
+    "train_loss": 12500000.0,
+    "val_phoneme_acc": 0.8500000238418579,
+    "val_g2p_structural_mse": 0.0730590745806694,
+    "val_g2p_categorical_ce": 99999888.0,
+    "val_loss": 9999984.0,
+    "epoch": 4
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.875,
+      "train_g2p_structural_mse": 0.1593749225139618,
+      "train_g2p_categorical_ce": 125000000.0,
+      "train_loss": 12500000.0,
+      "val_phoneme_acc": 0.7166666388511658,
+      "val_g2p_structural_mse": 0.1700408160686493,
+      "val_g2p_categorical_ce": 99999888.0,
+      "val_loss": 9999984.0,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.875,
+      "train_g2p_structural_mse": 0.0703854113817215,
+      "train_g2p_categorical_ce": 0.666503369808197,
+      "train_loss": 0.13703575730323792,
+      "val_phoneme_acc": 0.7666666507720947,
+      "val_g2p_structural_mse": 0.11374887824058533,
+      "val_g2p_categorical_ce": 99999888.0,
+      "val_loss": 9999984.0,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.75,
+      "train_g2p_structural_mse": 0.0857643336057663,
+      "train_g2p_categorical_ce": 250000000.0,
+      "train_loss": 25000000.0,
+      "val_phoneme_acc": 0.8333333134651184,
+      "val_g2p_structural_mse": 0.08702024072408676,
+      "val_g2p_categorical_ce": 99999888.0,
+      "val_loss": 9999984.0,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 0.875,
+      "train_g2p_structural_mse": 0.06611911207437515,
+      "train_g2p_categorical_ce": 125000000.0,
+      "train_loss": 12500000.0,
+      "val_phoneme_acc": 0.8166666626930237,
+      "val_g2p_structural_mse": 0.07802321761846542,
+      "val_g2p_categorical_ce": 99999888.0,
+      "val_loss": 9999984.0,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 0.875,
+      "train_g2p_structural_mse": 0.05122468248009682,
+      "train_g2p_categorical_ce": 125000000.0,
+      "train_loss": 12500000.0,
+      "val_phoneme_acc": 0.8500000238418579,
+      "val_g2p_structural_mse": 0.0730590745806694,
+      "val_g2p_categorical_ce": 99999888.0,
+      "val_loss": 9999984.0,
+      "epoch": 4
+    }
+  ]
+}

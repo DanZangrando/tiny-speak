@@ -1,31 +1,31 @@
 """
-🧠 TinySpeller (Stage 1) - Aprendiendo a Deletrear (G2P)
+📖 TinySpeller - Ensamblaje Fonológico (Stage 1 G2P)
 """
 
 import streamlit as st
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pathlib import Path
 import torch
 import pandas as pd
-import time
-from datetime import datetime
 import json
-import matplotlib.pyplot as plt
+import numpy as np
 
 from components.modern_sidebar import display_modern_sidebar
-from components.diagrams import get_tiny_reader_diagram
+from components.diagrams import get_reader_diagram, get_latent_mapping_diagram
 from components.code_viewer import get_function_source
-from models import TinyReader
+from components.analytics import plot_learning_curves, plot_confusion_matrix, plot_dtw_alignment
+from models.tiny_speller import TinySpeller
+from training.reader_dataset import build_reader_dataloaders
 from training.reader_module import TinyReaderLightning
-from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
-from training.config import load_master_dataset_config
-from utils import list_checkpoints, encontrar_device, save_model_metadata, RealTimePlotCallback, ReaderPredictionCallback, get_phonemes_from_word
+from training.config import load_master_dataset_config, save_master_dataset_config
+from utils.device import encontrar_device
+from utils.graphemes import get_default_words
+from utils.checkpoints import list_checkpoints
 
 # Configurar página
 st.set_page_config(
     page_title="TinySpeller - Stage 1",
-    page_icon="🧠",
+    page_icon="📖",
     layout="wide"
 )
 
@@ -33,7 +33,7 @@ def get_custom_css():
     return """
     <style>
     .main-header {
-        background: linear-gradient(90deg, #FF6B6B, #556270);
+        background: linear-gradient(90deg, #bb66ff, #ff66d9);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-size: 2.5rem;
@@ -45,633 +45,346 @@ def get_custom_css():
         background-color: var(--secondary-background-color);
         padding: 1.5rem;
         border-radius: 10px;
-        border-left: 5px solid #FF6B6B;
+        border-left: 5px solid #bb66ff;
         margin-bottom: 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     </style>
     """
 
-class ReaderHistoryCallback(pl.Callback):
-    def __init__(self):
-        self.history = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        metrics = {k: v.item() if isinstance(v, torch.Tensor) else v 
-                  for k, v in trainer.callback_metrics.items()}
-        metrics['epoch'] = trainer.current_epoch
-        self.history.append(metrics)
+def get_active_models():
+    ckpts = list_checkpoints("tiny_speller")
+    active = {}
+    for c in ckpts:
+        lang = c['meta'].get('config', {}).get('language')
+        if lang and lang not in active:
+            active[lang] = c
+    return active
 
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     display_modern_sidebar("tiny_speller")
     
-    st.markdown('<h1 class="main-header">🧠 TinySpeller: Aprendiendo a Deletrear (Stage 1)</h1>', unsafe_allow_html=True)
-
-    tabs = st.tabs(["📐 Arquitectura", "🏃‍♂️ Entrenamiento", "💾 Modelos Guardados", "🧪 Laboratorio"])
+    st.markdown('<h1 class="main-header">📖 TinySpeller: Conversión Grafema-Fonema (G2P)</h1>', unsafe_allow_html=True)
+    
+    tabs = st.tabs([
+        "📉 Entrenamiento Lotes", 
+        "🧪 Historial y Resultados", 
+        "🔍 Laboratorio Interactivo",
+        "📐 Arquitectura Estructural"
+    ])
+    config = load_master_dataset_config()
+    languages = config.get('experiment_config', {}).get('languages', ['es', 'en', 'fr'])
+    active_models = get_active_models()
 
     # ==========================================
-    # TAB 1: ARQUITECTURA
+    # TAB 1: ENTRENAMIENTO Y MODELOS
     # ==========================================
     with tabs[0]:
-        st.markdown("### 🔤 Stage 1: Grapheme-to-Phoneme (G2P)")
-        
-        st.markdown("""
-        ### 🧠 TinySpeller: La Ruta Subléxica (Grapheme-to-Phoneme)
+        st.markdown("### 📊 Modelos Activos")
+        if not active_models:
+            st.info("No hay modelos entrenados actualmente. Inicia el entrenamiento por lotes abajo.")
+        else:
+            cols = st.columns(len(languages))
+            for i, lang in enumerate(languages):
+                with cols[i]:
+                    st.markdown(f"#### Idioma: {lang.upper()}")
+                    if lang in active_models:
+                        ckpt = active_models[lang]
+                        meta = ckpt.get('meta', {})
+                        st.success("✅ Modelo Listo")
+                        metrics = meta.get('metrics', {})
+                        st.json({
+                            "Épocas": meta.get('config', {}).get('epochs'),
+                            "Val MSE": round(metrics.get('val_g2p_structural_mse', metrics.get('val_loss', 0.0)), 5),
+                            "Val CE": round(metrics.get('val_g2p_categorical_ce', 0.0), 4),
+                            "Actualizado": ckpt.get('date', 'Desconocido')
+                        })
+                    else:
+                        st.warning("⚠️ Pendiente de entrenar")
 
-        #### 1. Filosofía de Diseño: Codificación Predictiva
-        TinySpeller no aprende a clasificar fonemas directamente (como un clasificador softmax tradicional). En su lugar, aprende a **"imaginar"** cómo suenan las letras.
-        
-        *   **Perceptual Loss (El "Juez Auditivo"):** Usamos el modelo *TinyEars (Phonemes)* congelado como juez. TinySpeller debe generar vectores que activen las neuronas de TinyEars de la misma manera que lo haría el audio real.
-        *   **Justificación Neurocientífica:** Esto simula el aprendizaje mediante la minimización del error de predicción entre las áreas visuales (VWFA) y auditivas. El cerebro aprende a asociar grafemas con fonemas porque la activación visual predice exitosamente la activación auditiva.
+        st.divider()
+        st.markdown("### ⚙️ Iniciar Entrenamiento")
+        train_config = config.get("training_params", {}).get("tiny_speller", {})
+        col1, col2 = st.columns(2)
+        with col1:
+            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=train_config.get("epochs", 50))
+            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=train_config.get("batch_size", 16))
+        with col2:
+            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=train_config.get("lr", 1e-3), format="%.5f")
+            w_mse = st.slider("Peso de Alineación Estructural (MSE)", 0.0, 2.0, train_config.get("w_mse", 1.0), 0.1)
+            w_perceptual = st.slider("Peso Categórico (Cross-Entropy)", 0.0, 2.0, train_config.get("w_perceptual", 0.5), 0.1)
+            
+        if st.button("🚀 Iniciar Entrenamiento por Lotes (Todos los Idiomas)", type="primary"):
+            if "training_params" not in config:
+                config["training_params"] = {}
+            config["training_params"]["tiny_speller"] = {
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr,
+                "w_mse": w_mse,
+                "w_perceptual": w_perceptual
+            }
+            save_master_dataset_config(config)
+            
+            from training.runner import train_reader
+            
+            st.markdown("### 📈 Progreso de Entrenamiento...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            plots_container = st.container()
+            prediction_placeholder = st.empty()
 
-        #### 2. Arquitectura Cognitiva
-        Implementamos un modelo **Seq2Seq (Encoder-Decoder)** que permite mapeos flexibles (N letras -> M fonemas):
-        
-        *   **Encoder (VWFA):** Procesa la secuencia visual de letras (embeddings visuales de TinyEyes).
-        *   **Decoder (Imaginación):** Genera secuencialmente representaciones en el espacio latente auditivo.
-        *   **Mecanismo de Atención (Opcional):** Permite al modelo "mirar" partes específicas de la palabra mientras la deletrea mentalmente.
-
-        #### 3. Input/Output
-        *   **Entrada:** Secuencia de Embeddings Visuales (de TinyEyes).
-        *   **Salida:** Secuencia de Embeddings Auditivos (compatibles con TinyEars).
-        """)
-        
-        # Usamos el diagrama completo pero nos enfocamos en el Stage 1
-        st.graphviz_chart(get_tiny_reader_diagram())
+            for i, lang in enumerate(languages):
+                status_text.markdown(f"**Entrenando TinySpeller (G2P) para {lang.upper()}... ({i+1}/{len(languages)})**")
+                
+                phoneme_data = config.get('phoneme_samples', {}).get(lang, {})
+                if not phoneme_data:
+                    st.warning(f"Saltando {lang}: No se encontraron datos de fonemas.")
+                    continue
+                
+                rec_path = f"data/checkpoints/tiny_eyes/{lang}/best_model.ckpt"
+                lis_path = f"data/checkpoints/tiny_ears_phonemes/{lang}/best_model.ckpt"
+                
+                if not Path(rec_path).exists() or not Path(lis_path).exists():
+                    st.error(f"❌ Faltan dependencias para {lang} (TinyEyes o TinyEars Fonemas).")
+                    continue
+                
+                with plots_container:
+                    st.markdown(f"#### Entrenamiento: {lang.upper()}")
+                    col_plot1, col_plot2 = st.columns(2)
+                    plot_loss = col_plot1.empty()
+                    plot_acc = col_plot2.empty()
+                plot_placeholders = (plot_loss, plot_acc)
+                
+                train_conf = {
+                    "epochs": epochs,
+                    "lr": lr,
+                    "batch_size": batch_size,
+                    "w_dtw": 0.0,
+                    "w_perceptual": w_perceptual,
+                    "use_two_stage": True,
+                    "training_phase": "g2p"
+                }
+                
+                try:
+                    ckpt_path, hist = train_reader(
+                        lang, 
+                        listener_ckpt=lis_path, 
+                        recognizer_ckpt=rec_path, 
+                        config=train_conf, 
+                        plot_placeholders=plot_placeholders,
+                        prediction_placeholder=prediction_placeholder
+                    )
+                    st.success(f"✅ {lang.upper()} guardado: `{ckpt_path}`")
+                except Exception as e:
+                    st.error(f"❌ Error en {lang}: {e}")
+                
+                progress_bar.progress((i + 1) / len(languages))
+            
+            st.success("🎉 Entrenamientos completados. Por favor refresca la página.")
 
     # ==========================================
-    # TAB 2: ENTRENAMIENTO
+    # TAB 2: RESULTADOS GLOBALES E HISTORIAL
     # ==========================================
     with tabs[1]:
-        st.markdown("### ⚙️ Configuración del Entrenamiento (G2P)")
-        
-        config = load_master_dataset_config()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### Hiperparámetros")
-            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=50)
-            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=16)
-            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=1e-3, format="%.5f")
-            
-            st.markdown("#### Pesos de Loss")
-            w_dtw = st.slider("Peso Soft-DTW (Alineación)", 0.0, 2.0, 1.0, 0.1)
-            w_perceptual = st.slider("Peso Perceptual (Feature Matching)", 0.0, 2.0, 0.5, 0.1)
-            
-        with col2:
-            st.markdown("#### Componentes Previos")
-            
-            # 1. Recognizer (Visual)
-            rec_ckpts = list_checkpoints("recognizer")
-            if not rec_ckpts:
-                st.error("❌ No hay modelos TinyEyes (Visual) disponibles.")
-                st.stop()
-            rec_opts = {c['filename']: c['path'] for c in rec_ckpts}
-            sel_rec = st.selectbox("TinyEyes (Visual)", list(rec_opts.keys()))
-            
-            # 2. Listener (Phonemes)
-            lis_ckpts = list_checkpoints("listener")
-            # Filtrar fonemas
-            phoneme_ckpts = [c for c in lis_ckpts if "phoneme" in c['filename'] or c.get('meta', {}).get('config', {}).get('type') == 'phoneme']
-            
-            if not phoneme_ckpts:
-                st.error("❌ No hay modelos TinyEars (Fonemas) disponibles. Entrena uno en la página 'TinyEars - Fonemas'.")
-                st.stop()
-                
-            lis_opts = {c['filename']: c['path'] for c in phoneme_ckpts}
-            sel_lis = st.selectbox("TinyEars (Juez Fonémico)", list(lis_opts.keys()))
-            
-            # Dataset
-            target_language = st.selectbox("Idioma Objetivo", config.get('experiment_config', {}).get('languages', ['es']))
-            
-            # Para G2P, el output son fonemas, así que el vocabulario debe ser de fonemas
-            phoneme_data = config.get('phoneme_samples', {}).get(target_language, {})
-            if phoneme_data:
-                # Filtrar vacíos y ordenar para coincidir con el dataset
-                words = sorted([w for w, s in phoneme_data.items() if s])
-            else:
-                words = []
-                
-            st.info(f"Entrenando sobre {len(words)} fonemas.")
-
-        if st.button("🚀 Iniciar Entrenamiento TinySpeller", type="primary"):
-            # Setup
-            pl.seed_everything(42)
-            
-            # 1. Construir Dataloaders PRIMERO
-            try:
-                train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
-                    batch_size=batch_size,
-                    target_language=target_language,
-                    num_workers=4,
-                    seed=42,
-                    use_phonemes=True
-                )
-                
-                words = train_ds.class_names
-                st.success(f"Dataset cargado con {len(words)} ítems.")
-                
-            except Exception as e:
-                st.error(f"Error cargando datos: {e}")
-                st.stop()
-                
-            # 2. Inicializar Modelo
-            if not words:
-                 st.error("⚠️ No se encontraron datos válidos en el dataset.")
-                 st.stop()
-                 
-            # Cargar checkpoints de dependencias
-            if not lis_opts[sel_lis] or not rec_opts[sel_rec]:
-                st.error("Se requieren checkpoints de TinyEars (Phonemes) y TinyEyes (Visual).")
-                st.stop()
-                
-            model = TinyReaderLightning(
-                class_names=words,
-                listener_checkpoint_path=lis_opts[sel_lis], # Phoneme Listener
-                recognizer_checkpoint_path=rec_opts[sel_rec],
-                learning_rate=lr,
-                w_dtw=w_dtw,
-                w_perceptual=w_perceptual,
-                use_two_stage=True, # Siempre True para usar la arquitectura modular
-                training_phase="g2p", # FASE G2P
-                phoneme_listener_checkpoint_path=lis_opts[sel_lis] # Pasamos el mismo como phoneme listener
-            )
-            
-            # Callbacks
-            history_cb = ReaderHistoryCallback()
-            early_stop_callback = EarlyStopping(
-                monitor="val_loss",
-                min_delta=0.001,
-                patience=10,
-                verbose=True,
-                mode="min"
-            )
-            
-            checkpoint_callback = ModelCheckpoint(
-                dirpath="models/reader_checkpoints",
-                filename="tiny_speller-{epoch:02d}-{val_loss:.2f}",
-                save_top_k=1,
-                monitor="val_loss",
-                mode="min"
-            )
-            
-            trainer = pl.Trainer(
-                max_epochs=epochs,
-                accelerator="auto",
-                devices=1,
-                callbacks=[history_cb, early_stop_callback, checkpoint_callback],
-                enable_progress_bar=True,
-                default_root_dir="lightning_logs/tiny_speller"
-            )
-            
-            # Placeholders
-            st.markdown("### 📈 Progreso")
-            col_plot1, col_plot2 = st.columns(2)
-            with col_plot1:
-                st.markdown("#### Pérdida (Loss)")
-                plot_loss = st.empty()
-            with col_plot2:
-                st.markdown("#### Precisión (Fonemas)")
-                plot_acc = st.empty()
-                
-            realtime_cb = RealTimePlotCallback(plot_loss, plot_acc)
-            trainer.callbacks.append(realtime_cb)
-            
-            # Prediction Callback
-            pred_placeholder = st.empty()
-            pred_cb = ReaderPredictionCallback(loaders['val'], pred_placeholder)
-            trainer.callbacks.append(pred_cb)
-            
-            with st.spinner("Entrenando TinySpeller (G2P)..."):
-                trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
-                
-            st.success("Entrenamiento completado!")
-            
-            # Guardar
-            save_dir = Path("models/reader")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            final_path = save_dir / f"tiny_speller_{target_language}_{timestamp}.ckpt"
-            trainer.save_checkpoint(final_path)
-            
-            meta_config = {
-                "epochs": epochs, "lr": lr, "batch_size": batch_size,
-                "weights": {"dtw": w_dtw, "perceptual": w_perceptual},
-                "listener_ckpt": lis_opts[sel_lis],
-                "recognizer_ckpt": rec_opts[sel_rec],
-                "language": target_language,
-                "vocab": words,
-                "training_phase": "g2p",
-                "type": "speller"
-            }
-            final_metrics = history_cb.history[-1] if history_cb.history else {}
-            save_model_metadata(final_path, meta_config, final_metrics)
-            
-            if history_cb.history:
-                pd.DataFrame(history_cb.history).to_csv(final_path.with_suffix(".csv"), index=False)
-                
-            st.info(f"Modelo guardado en {final_path}")
-
-    # ==========================================
-    # TAB 3: MODELOS GUARDADOS
-    # ==========================================
-    with tabs[2]:
-        st.markdown("### 📚 Modelos TinySpeller (G2P)")
-        all_ckpts = list_checkpoints("reader")
-        speller_ckpts = [c for c in all_ckpts if "speller" in c['filename'] or c.get('meta', {}).get('config', {}).get('training_phase') == 'g2p']
-        
-        if not speller_ckpts:
-            st.info("No hay modelos TinySpeller entrenados.")
+        st.markdown("### 🧪 Historial y Resultados Generales")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
         else:
-            opts = {c['filename']: c for c in speller_ckpts}
-            sel_key = st.selectbox("Seleccionar Modelo", list(opts.keys()))
-            sel_ckpt = opts[sel_key]
+            from components.analytics import plot_training_history
             
-            col_act1, col_act2 = st.columns([1, 3])
-            with col_act1:
-                if st.button("🗑️ Eliminar", key="del_sp"):
-                    Path(sel_ckpt['path']).unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
-                    st.rerun()
-            
+            st.markdown("#### Progreso de Entrenamiento Registrado")
+            hist_cols = st.columns(len(active_models))
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with hist_cols[i]:
+                    st.markdown(f"**🌍 {lang_eval.upper()} - Ciclo de Entrenamiento**")
+                    history_data = ckpt_info.get('meta', {}).get('history', [])
+                    plot_training_history(history_data)
+                    
             st.divider()
             
-            # --- EVALUACIÓN PROFUNDA ---
-            st.markdown("### 🔬 Evaluación Profunda")
+            st.markdown("#### Evaluación Empírica de Validación")
+            st.markdown("#### 🌍 Evaluación Empírica por Idioma")
+            eval_cols = st.columns(len(active_models))
             
-            if st.button("🚀 Cargar y Evaluar Modelo", key="eval_deep"):
-                with st.spinner("Cargando modelo y ejecutando evaluación..."):
+            import pickle
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with eval_cols[i]:
+                    st.markdown(f"### 🌍 {lang_eval.upper()}")
                     try:
-                        # 1. Cargar Modelo
-                        # Necesitamos saber las clases para cargar
-                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
-                        words = []
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta = json.load(f)
-                                words = meta.get('config', {}).get('vocab', [])
+                        eval_path = Path(ckpt_info['path']).parent / "eval_results.pkl"
                         
-                        # Si no hay vocab, intentar cargar sin él (si está en hparams) o error
-                        kwargs = {"class_names": words} if words else {}
+                        if eval_path.exists():
+                            with open(eval_path, "rb") as f:
+                                eval_data_raw = pickle.load(f)
+                            
+                            # Cargar datos estandarizados
+                            samples = eval_data_raw.get("samples", [])
+                            confusion = eval_data_raw.get("confusion", {})
+                            embeddings = eval_data_raw.get("embeddings", [])
+                            labels = eval_data_raw.get("labels", [])
+                            
+                            st.success(f"Evaluación {lang_eval.upper()} cargada.")
+                            
+                            # 1. Matriz de Confusión
+                            if confusion.get("y_true"):
+                                st.markdown("#### 🎯 Matriz de Confusión (Fonemas)")
+                                plot_confusion_matrix(
+                                    confusion["y_true"], 
+                                    confusion["y_pred"], 
+                                    confusion["class_names"]
+                                )
+                                
+                                # 2. Reporte de Clasificación
+                                st.markdown("#### 📋 Métricas de Clasificación")
+                                from components.analytics import display_classification_report
+                                display_classification_report(
+                                    confusion["y_true"], 
+                                    confusion["y_pred"], 
+                                    confusion["class_names"]
+                                )
+
+                            # 3. PCA (Espacio Latente)
+                            if len(embeddings) > 0:
+                                st.markdown("#### 🌌 Espacio Latente (PCA 3D)")
+                                from components.analytics import plot_latent_space_pca
+                                # Usar solo una muestra si hay demasiados puntos
+                                n_pca = min(len(embeddings), 500)
+                                plot_latent_space_pca(
+                                    np.array(embeddings)[:n_pca], 
+                                    np.array(labels)[:n_pca], 
+                                    confusion.get("class_names", [])
+                                )
+                            
+                            # 4. Muestras Individuales
+                            st.markdown("#### 📖 Muestras de Predicción")
+                            for item in samples:
+                                word = item.get("word") or item.get("label_str")
+                                pred = item.get("prediction")
+                                target = item.get("target")
+                                
+                                with st.expander(f"Muestra: {word}"):
+                                    st.write(f"**Target:** {target}")
+                                    st.write(f"**Pred:** {pred}")
+                                    conf = item.get("confidence", 0)
+                                    st.progress(conf, text=f"Confianza: {conf:.2%}")
+                        else:
+                            st.warning(f"⚠️ Sin evaluación para {lang_eval}.")
+                    except Exception as e:
+                        st.error(f"Error en {lang_eval}: {e}")
+
+    # ==========================================
+    # TAB 3: LABORATORIO INTERACTIVO
+    # ==========================================
+    with tabs[2]:
+        st.markdown("### 🔍 Laboratorio Interactivo")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
+        else:
+            lang_lab = st.selectbox("Seleccionar Idioma para Pruebas Manuales", list(active_models.keys()), key="lab_lang")
+            ckpt_lab = active_models[lang_lab]
+            
+            if st.button(f"🎧 Sintetizar Fonemas de Prueba G2P para {lang_lab.upper()}", type="primary"):
+                with st.spinner("Decodificando..."):
+                    try:
+                        meta_config = ckpt_lab.get('meta', {}).get('config', {})
+                        model_hparams = {k: v for k, v in meta_config.items() if k in ["hidden_dim", "output_dim", "num_layers"]}
+                        if not model_hparams:
+                            model_hparams = config.get("architectures", {}).get("tiny_speller", {})
                         
-                        model = TinyReaderLightning.load_from_checkpoint(sel_ckpt['path'], **kwargs)
+                        model = TinyReaderLightning.load_from_checkpoint(
+                            ckpt_lab['path'], 
+                            strict=False,
+                            **model_hparams
+                        )
                         model.eval()
                         device = encontrar_device()
                         model.to(device)
                         
-                        # Si no había metadata, intentar recuperar vocabulario del modelo
-                        if not words and hasattr(model, "class_names"):
-                            words = model.class_names
-                            st.warning("⚠️ Metadata no encontrada. Usando vocabulario guardado en el checkpoint.")
-                        
-                        # 2. Cargar Datos (Validation)
-                        target_lang = model.hparams.get('target_language', 'es') # Intentar obtener de hparams o default
-                        # Si no está en hparams, intentar de meta
-                        if meta_path.exists():
-                             with open(meta_path) as f:
-                                meta = json.load(f)
-                                target_lang = meta.get('config', {}).get('language', 'es')
-
-                        _, _, _, loaders = build_audio_dataloaders(
-                            batch_size=16,
-                            target_language=target_lang,
-                            num_workers=0,
-                            seed=42,
-                            use_phonemes=True # Para obtener el vocabulario correcto si es necesario, aunque aquí usamos words del modelo
+                        _, _, _, loaders = build_reader_dataloaders(
+                            batch_size=32, num_workers=0, seed=42, target_language=lang_lab, use_phoneme_targets=True
                         )
-                        val_loader = loaders['val']
                         
-                        # 3. Loop de Inferencia
-                        all_real_phonemes = []
-                        all_pred_phonemes = []
-                        all_real_idxs = []
-                        all_pred_idxs = []
-                        all_similarities = []
-                        all_gen_embeddings_list = []
-                        all_gen_embeddings_list = []
+                        val_ds = loaders['val'].dataset
+                        # Obtener todas las palabras disponibles en el set de validación
+                        available_words = sorted(list(set([val_ds[i]["label_str"] for i in range(len(val_ds))])))
                         
-                        results_data = []
+                        target_word = st.selectbox("Seleccionar palabra a predecir", available_words, key=f"sel_06_{lang_lab}")
                         
-                        from utils import get_phonemes_from_word as get_phonemes_utils
-                        from torch.nn.functional import cosine_similarity
-                        
-                        progress_bar = st.progress(0)
-                        total_batches = len(val_loader)
-                        
-                        with torch.no_grad():
-                            for batch_idx, batch in enumerate(val_loader):
-                                # Extraer datos
-                                batch_words = batch['words']
+                        found_item = None
+                        for i in range(len(val_ds)):
+                            item = val_ds[i]
+                            if item["label_str"] == target_word:
+                                found_item = item
+                                break
                                 
-                                # A. Obtener Logits Visuales (Input)
-                                logits_sequences = []
-                                for w in batch_words:
-                                    images = model._get_word_images(w).to(device)
-                                    res = model.recognizer(images)
-                                    word_logits = res[0] if isinstance(res, tuple) else res
-                                    logits_sequences.append(word_logits)
-                                from torch.nn.utils.rnn import pad_sequence
-                                padded_logits = pad_sequence(logits_sequences, batch_first=True, padding_value=0.0)
-                                
-                                # B. Calcular Targets Reales (para longitud y comparación)
-                                phoneme_targets_list = []
-                                for w in batch_words:
-                                    ph = get_phonemes_utils(w)
-                                    idxs = [model.phoneme_to_idx.get(p, 0) for p in ph]
-                                    if not idxs: idxs = [0]
-                                    phoneme_targets_list.append(idxs)
-                                    
-                                max_len = max(len(t) for t in phoneme_targets_list)
-                                
-                                # C. Generar Embeddings
-                                gen_embeddings = model.reader_g2p(padded_logits, target_length=max_len)
-                                # (B, T, D)
-                                
-                                # D. Clasificar (Predicción)
-                                phoneme_logits = model.phoneme_listener.classifier(gen_embeddings)
-                                preds = torch.argmax(phoneme_logits, dim=-1) # (B, T)
-                                
-                                # E. Análisis por palabra
-                                for b in range(len(batch_words)):
-                                    word = batch_words[b]
-                                    real_idxs = phoneme_targets_list[b]
-                                    pred_idxs = preds[b][:len(real_idxs)].cpu().tolist()
-                                    
-                                    real_ph_strs = [model.phoneme_class_names[i] for i in real_idxs]
-                                    pred_ph_strs = [model.phoneme_class_names[i] for i in pred_idxs]
-                                    
-                                    # Guardar para matriz de confusión (flattened)
-                                    all_real_phonemes.extend(real_ph_strs)
-                                    all_pred_phonemes.extend(pred_ph_strs)
-                                    all_real_idxs.extend(real_idxs)
-                                    all_pred_idxs.extend(pred_idxs)
-                                    
-                                    # Calcular similitud de embeddings
-                                    # Real embeddings (from bank)
-                                    real_emb_tensor = model.phoneme_embeddings_bank[torch.tensor(real_idxs, device=device)]
-                                    gen_emb_tensor = gen_embeddings[b][:len(real_idxs)]
-                                    
-                                    # Guardar embeddings generados para PCA
-                                    all_gen_embeddings_list.extend(gen_emb_tensor.cpu().numpy())
-                                    
-                                    sims = cosine_similarity(real_emb_tensor, gen_emb_tensor, dim=-1).cpu().tolist()
-                                    avg_sim = sum(sims) / len(sims) if sims else 0
-                                    all_similarities.extend(sims)
-                                    
-                                    results_data.append({
-                                        "Palabra": word,
-                                        "Real": " ".join(real_ph_strs),
-                                        "Predicción": " ".join(pred_ph_strs),
-                                        "Similitud Promedio": f"{avg_sim:.4f}",
-                                        "Longitud": len(real_idxs)
-                                    })
-                                
-                                progress_bar.progress((batch_idx + 1) / total_batches)
-                                
-                        st.success("Evaluación Finalizada")
-                        
-                        # 4. Visualización
-                        
-                        # A. Tabla de Resultados
-                        st.markdown("#### 📝 Comparación de Secuencias")
-                        df_res = pd.DataFrame(results_data)
-                        st.dataframe(df_res)
-                        
-                        # B. Matriz de Confusión
-                        st.markdown("#### 😵 Matriz de Confusión (Fonemas)")
-                        from components.analytics import plot_confusion_matrix
-                        # Pasar índices y nombres de clases completos para evitar errores de etiquetas faltantes
-                        plot_confusion_matrix(all_real_idxs, all_pred_idxs, model.phoneme_class_names)
-                        
-                        # C. Análisis de Embeddings
-                        st.markdown("#### 💎 Estructura de Embeddings")
-                        col_emb1, col_emb2 = st.columns(2)
-                        with col_emb1:
-                            st.metric("Total Fonemas Generados", len(all_similarities))
-                            st.metric("Dimensión del Embedding", model.phoneme_listener.hidden_dim)
+                        if found_item is not None:
+                            images = found_item["image"].to(device).unsqueeze(0)
+                            target_audios = found_item["waveform"].to(device)
+                            label = found_item["label_str"]
                             
-                        with col_emb2:
-                            # Histograma de similitud
-                            fig, ax = plt.subplots()
-                            ax.hist(all_similarities, bins=20, color='skyblue', edgecolor='black')
-                            ax.set_title("Distribución de Similitud Cosine (Gen vs Real)")
-                            ax.set_xlabel("Similitud")
-                            ax.set_ylabel("Frecuencia")
+                            pred_audio = model(images)
+                            
+                            st.markdown(f"#### Palabra Base Generadora: `{label}`")
+                            fig = plot_dtw_alignment(pred_audio[0], target_audios)
                             st.pyplot(fig)
                             
-                        # D. PCA 3D
-                        st.markdown("#### 🎨 Proyección PCA 3D (Espacio Latente)")
-                        st.info("Visualización 3D interactiva de los embeddings de fonemas generados. Los puntos del mismo color (mismo fonema real) deberían agruparse juntos, demostrando que el modelo ha aprendido una representación robusta e invariante.")
-                        
-                        if len(all_gen_embeddings_list) > 5: # Mínimo para PCA
-                            try:
-                                from sklearn.decomposition import PCA
-                                import plotly.express as px
-                                
-                                # Usar 3 componentes para 3D
-                                pca = PCA(n_components=3)
-                                embeddings_3d = pca.fit_transform(all_gen_embeddings_list)
-                                
-                                df_pca = pd.DataFrame({
-                                    'x': embeddings_3d[:, 0],
-                                    'y': embeddings_3d[:, 1],
-                                    'z': embeddings_3d[:, 2],
-                                    'Fonema Real': all_real_phonemes,
-                                    'Fonema Predicho': all_pred_phonemes
-                                })
-                                
-                                fig = px.scatter_3d(
-                                    df_pca, 
-                                    x='x', y='y', z='z',
-                                    color='Fonema Real',
-                                    symbol='Fonema Real',
-                                    hover_data=['Fonema Predicho'],
-                                    title="Espacio Latente de Fonemas (3D)",
-                                    opacity=0.7,
-                                    size_max=10
-                                )
-                                
-                                fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                            except Exception as e:
-                                st.warning(f"No se pudo generar PCA 3D: {e}")
+                            sr = 16000
+                            st.markdown("##### Fonética Sintetizada G2P")
+                            st.audio(pred_audio[0].cpu().numpy(), sample_rate=sr)
+                            st.markdown("##### Fonética Original de Referencia")
+                            st.audio(target_audios.cpu().numpy(), sample_rate=sr)
                         else:
-                            st.warning("No hay suficientes datos para PCA.")
-
+                            st.warning("No se encontraron muestras en validación.")
+                        
                     except Exception as e:
-                        st.error(f"Error en evaluación: {e}")
-                        st.exception(e)
+                        st.error(f"Error cargando instancia: {e}")
 
     # ==========================================
-    # TAB 4: LABORATORIO
+    # TAB 4: ARQUITECTURA
     # ==========================================
     with tabs[3]:
-        st.markdown("### 🧪 Laboratorio G2P")
+        st.markdown("### 📐 Arquitectura de la Red: TinySpeller (G2P)")
+        st.info("La arquitectura configurada aquí mapea activaciones visuales IT (512-dim) a imágenes neurales auditivas.")
         
-        # 1. Selección de Modelo
-        all_ckpts = list_checkpoints("reader")
-        speller_ckpts = [c for c in all_ckpts if "speller" in c['filename'] or c.get('meta', {}).get('config', {}).get('training_phase') == 'g2p']
+        arch_config = config.get("architectures", {}).get("tiny_speller", {})
         
-        if not speller_ckpts:
-            st.warning("⚠️ No hay modelos TinySpeller disponibles. Entrena uno primero.")
-        else:
-            opts = {c['filename']: c for c in speller_ckpts}
-            col_sel1, col_sel2 = st.columns([3, 1])
-            with col_sel1:
-                sel_key_lab = st.selectbox("Seleccionar Modelo para Laboratorio", list(opts.keys()), key="sel_lab_model")
-            
-            sel_ckpt_lab = opts[sel_key_lab]
-            
-            # 2. Cargar Modelo (Lazy Loading con Session State para no recargar siempre)
-            if 'lab_model_path' not in st.session_state or st.session_state.lab_model_path != sel_ckpt_lab['path']:
-                with st.spinner("Cargando modelo..."):
-                    try:
-                        # Intentar cargar metadata para vocabulario
-                        meta_path = Path(sel_ckpt_lab['path']).with_suffix(".ckpt.meta.json")
-                        words = []
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta = json.load(f)
-                                words = meta.get('config', {}).get('vocab', [])
-                        
-                        kwargs = {"class_names": words} if words else {}
-                        model_lab = TinyReaderLightning.load_from_checkpoint(sel_ckpt_lab['path'], **kwargs)
-                        model_lab.eval()
-                        device = encontrar_device()
-                        model_lab.to(device)
-                        
-                        st.session_state.lab_model = model_lab
-                        st.session_state.lab_model_path = sel_ckpt_lab['path']
-                    except Exception as e:
-                        st.error(f"Error cargando modelo: {e}")
-                        st.stop()
-            
-            model_lab = st.session_state.lab_model
-            device = encontrar_device()
-            
-            # 3. Interfaz de Entrada
-            st.markdown("#### ✍️ Entrada")
-            col_in1, col_in2 = st.columns([3, 1])
-            with col_in1:
-                input_word = st.text_input("Escribe una palabra:", value="mama").strip().lower()
-            with col_in2:
-                if st.button("🎲 Palabra Aleatoria"):
-                    if model_lab.class_names:
-                        import random
-                        input_word = random.choice(model_lab.class_names)
-                        st.info(f"Palabra seleccionada: {input_word}")
-                    else:
-                        input_word = "test"
-            
-            if input_word:
-                st.divider()
-                try:
-                    from utils import tokenize_graphemes
-                    # Obtener grafemas disponibles del modelo visual
-                    available_graphemes = list(model_lab.visual_config.keys())
-                    tokens = tokenize_graphemes(input_word, available_graphemes)
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("#### Parámetros Técnicos (MLP Projector)")
+            with st.form("arch_form_tiny_speller"):
+                h_dim = st.number_input("Dimensión Oculta (hidden_dim)", min_value=64, max_value=2048, value=arch_config.get("hidden_dim", 256), step=64)
+                o_dim = st.number_input("Dimensión Salida Auditiva (output_dim)", min_value=64, max_value=2048, value=arch_config.get("output_dim", 256), step=64)
+                n_layers = st.number_input("Número de Capas Densas (MLP)", min_value=1, max_value=10, value=arch_config.get("num_layers", 2))
+                
+                if st.form_submit_button("💾 Guardar Configuración", type="primary"):
+                    if "architectures" not in config:
+                        config["architectures"] = {}
+                    config["architectures"]["tiny_speller"] = {
+                        "hidden_dim": h_dim,
+                        "output_dim": o_dim,
+                        "num_layers": n_layers
+                    }
+                    save_master_dataset_config(config)
+                    st.success("Configuración del Proyector Puntual guardada.")
+                    st.rerun()
                     
-                    # Usar tokens para obtener imágenes
-                    # _get_word_images ya usa tokenize_graphemes internamente, pero necesitamos los tokens para iterar
-                    images = model_lab._get_word_images(input_word).to(device)
-                    # images: (L, 3, 64, 64)
-                    
-                    # B. Imaginación Fonológica (Serial)
-                    st.markdown("#### Imaginación Fonológica (TinySpeller)")
-                    st.caption("El modelo procesa cada grafema individualmente para revelar su 'voz interna'.")
-                    
-                    serial_pred_phonemes = []
-                    
-                    # Iterar sobre tokens
-                    cols_serial = st.columns(min(len(tokens), 5))
-                    
-                    import plotly.express as px
+        with col_c2:
+            st.markdown("#### 🧠 Teoría: Mapeo Neural Directo (Pointwise)")
+            st.markdown("""
+            Esta red implementa una **transducción sensorial directa**:
+            
+            1. **Entrada (IT Cortex)**: Recibe vectores de 512-dim que representan la abstracción visual del grafema.
+            2. **Proyección Puntual**: Cada frame se procesa de forma independiente mediante capas MLP (Linear + GELU + LayerNorm), asegurando que el sonido generado dependa solo de la letra vista.
+            3. **Salida (Auditorio)**: Genera la imagen neural auditiva que el oído fonético reconoce como el sonido correspondiente.
+            
+            Este enfoque evita la fuga de información temporal, obligando al sistema a aprender una **decodificación fonológica pura**.
+            """)
+            st.graphviz_chart(get_latent_mapping_diagram(module_name="TinySpeller", stage="G2P"))
 
-                    with torch.no_grad():
-                        for i, token in enumerate(tokens):
-                            col_idx = i % 5
-                            if col_idx == 0 and i > 0:
-                                cols_serial = st.columns(min(len(tokens) - i, 5))
-                            
-                            with cols_serial[col_idx]:
-                                st.markdown(f"**{token}**")
-                                
-                                # 1. Imagen
-                                if i < len(images):
-                                    img_tensor = images[i] # (3, 64, 64)
-                                    st.image(img_tensor.permute(1, 2, 0).cpu().numpy(), use_container_width=True)
-                                    
-                                    # 2. Inferencia Individual
-                                    # (1, 3, 64, 64)
-                                    img_batch = img_tensor.unsqueeze(0)
-                                    
-                                    # Recognizer
-                                    res = model_lab.recognizer(img_batch)
-                                    w_logits = res[0] if isinstance(res, tuple) else res
-                                    # (1, VDim) -> (1, 1, VDim)
-                                    w_logits = w_logits.unsqueeze(1)
-                                    
-                                    # Reader G2P
-                                    g_emb = model_lab.reader_g2p(w_logits, target_length=1)
-                                    # g_emb: (1, 1, 256)
-                                    
-                                    # Listener Classifier
-                                    p_logits = model_lab.phoneme_listener.classifier(g_emb)
-                                    p_idx = torch.argmax(p_logits, dim=-1).item()
-                                    p_str = model_lab.phoneme_class_names[p_idx]
-                                    
-                                    serial_pred_phonemes.append(p_str)
-                                    
-                                    st.markdown(f"🡆 **/{p_str}/**")
-
-                                    # 3. Visualización de Embedding Individual
-                                    emb_vis = g_emb.squeeze(0).squeeze(0).cpu().numpy() # (256,)
-                                    # Reshape para heatmap vertical (256, 1)
-                                    emb_vis = emb_vis.reshape(-1, 1)
-                                    
-                                    fig_emb = px.imshow(
-                                        emb_vis, 
-                                        labels=dict(x="", y="Dim", color="Act"),
-                                        aspect="auto",
-                                        color_continuous_scale="Viridis"
-                                    )
-                                    fig_emb.update_layout(
-                                        height=150, 
-                                        margin=dict(l=0, r=0, t=0, b=0),
-                                        xaxis=dict(showticklabels=False),
-                                        yaxis=dict(showticklabels=False)
-                                    )
-                                    st.plotly_chart(fig_emb, use_container_width=True)
-                                    
-                    # C. Comparación
-                    from utils import get_phonemes_from_word as get_phonemes_utils_lab
-                    real_phonemes = get_phonemes_utils_lab(input_word)
-                    
-                    st.markdown("#### Verificación")
-                    col_res1, col_res2 = st.columns(2)
-                    
-                    with col_res1:
-                        st.info(f"**Real:** /{ ' - '.join(real_phonemes) }/")
-                        
-                    with col_res2:
-                        # Calcular precisión simple
-                        min_len = min(len(real_phonemes), len(serial_pred_phonemes))
-                        matches = sum(1 for i in range(min_len) if real_phonemes[i] == serial_pred_phonemes[i])
-                        acc = matches / max(len(real_phonemes), 1)
-                        
-                        if acc == 1.0:
-                            st.success(f"**Precisión:** {acc:.0%}")
-                        else:
-                            st.warning(f"**Precisión:** {acc:.0%}")
-
-
-                            
-                except Exception as e:
-                    st.error(f"Error en inferencia: {e}")
+        with st.expander("💻 Ver Código del Modelo Base"):
+            st.code(get_function_source(TinySpeller), language="python")
 
 if __name__ == "__main__":
     main()

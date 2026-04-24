@@ -52,38 +52,30 @@ def _stratified_split(
         rng.shuffle(valid_entries)
         n_total = len(valid_entries)
 
-        # Compute split sizes while ensuring the sum equals ``n_total``.
-        train_size = int(round(n_total * split_ratios["train"]))
-        val_size = int(round(n_total * split_ratios["val"]))
-        # Ensure at least one item goes to the train split when possible.
-        if train_size == 0 and n_total > 0:
-            train_size = 1
-
-        # Ensure at least one item goes to val split when possible (for confusion matrix)
-        if val_size == 0 and n_total >= 2:
-            val_size = 1
-
-        # Adjust sizes to avoid exceeding the total count.
-        if train_size + val_size > n_total:
-            # Prioritize keeping at least 1 val sample if we have enough data
-            if n_total >= 2 and val_size == 1:
-                train_size = n_total - val_size
-            else:
-                val_size = max(0, n_total - train_size)
-
-        test_size = max(0, n_total - train_size - val_size)
-
-        # Guard against empty splits when total samples are scarce.
-        if train_size == 0 and n_total > 0:
-            train_size = 1
-        if train_size + val_size == n_total and test_size == 0 and n_total >= 2:
-            val_size = max(1, val_size)
-            train_size = max(1, n_total - val_size)
-        test_size = max(0, n_total - train_size - val_size)
-
-        train_items = valid_entries[:train_size]
-        val_items = valid_entries[train_size : train_size + val_size]
-        test_items = valid_entries[train_size + val_size :]
+        if n_total == 1:
+            train_items = valid_entries
+            val_items = []
+            test_items = []
+        else:
+            # 1. Cálculo base
+            train_size = int(round(n_total * split_ratios["train"]))
+            val_size = int(round(n_total * split_ratios["val"]))
+            
+            # 2. Garantizar 1 en val si N>=2
+            if n_total >= 2 and val_size == 0:
+                val_size = 1
+                if train_size > 0: train_size -= 1
+                
+            # 3. Garantizar 1 en test si N>=3
+            if n_total >= 3 and (n_total - train_size - val_size) == 0:
+                if train_size > 1: train_size -= 1
+                elif val_size > 1: val_size -= 1
+            
+            test_size = max(0, n_total - train_size - val_size)
+            
+            train_items = valid_entries[:train_size]
+            val_items = valid_entries[train_size : train_size + val_size]
+            test_items = valid_entries[train_size + val_size :]
 
         splits["train"].extend((letter, item) for item in train_items)
         splits["val"].extend((letter, item) for item in val_items)
@@ -166,10 +158,10 @@ class VisualLetterDataset(Dataset[Dict[str, torch.Tensor]]):
         self.repo_root = get_repo_root()
         
         if self.forced_class_names:
-            # Si se fuerzan clases, usamos esas.
-            # Filtrar generated para que solo tenga esas clases?
-            # O simplemente definimos self.letters y si falta alguna en generated, no tendrá samples.
-            self.letters = self.forced_class_names
+            # Si se fuerzan clases, usamos esas EXACTAMENTE.
+            self.letters = list(self.forced_class_names)
+            # No filtramos generated aquí para que la lógica de split_map funcione con lo que hay en disco,
+            # pero el mapeo letter_to_index será el oficial.
         else:
             self.letters: List[str] = sorted(generated.keys())
             

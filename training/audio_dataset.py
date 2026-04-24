@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from pathlib import Path
 from training.config import load_master_dataset_config
-from utils import WAV2VEC_SR, load_waveform
+from utils.audio import AUDIO_SR, load_waveform
 
 try:  # pragma: no cover - defensive import
     import torchaudio
@@ -68,7 +68,7 @@ class AudioWordDataset(Dataset):
         return self.class_names
 
 
-def _decode_waveform(audio_b64: str, target_sr: int = WAV2VEC_SR) -> Tuple[torch.Tensor, int]:
+def _decode_waveform(audio_b64: str, target_sr: int = AUDIO_SR) -> Tuple[torch.Tensor, int]:
     raw = base64.b64decode(audio_b64)
     buffer = io.BytesIO(raw)
 
@@ -109,22 +109,50 @@ def _decode_waveform(audio_b64: str, target_sr: int = WAV2VEC_SR) -> Tuple[torch
 def _compute_split_counts(total: int, ratios: Dict[str, float]) -> Dict[str, int]:
     if total == 0:
         return {key: 0 for key in ratios}
+    if total == 1:
+        # Si solo hay una muestra, va a entrenamiento forzado
+        res = {key: 0 for key in ratios}
+        res["train"] = 1
+        return res
 
-    raw_counts: Dict[str, int] = {key: int(math.floor(total * ratio)) for key, ratio in ratios.items()}
-    remainder = total - sum(raw_counts.values())
-    fractional = sorted(
-        ((total * ratio) - raw_counts[key], key) for key, ratio in ratios.items()
-    )
-    fractional.reverse()
-    for _, split in fractional:
-        if remainder == 0:
-            break
-        raw_counts[split] += 1
-        remainder -= 1
-    return raw_counts
+    # 1. Cálculo base usando redondeo estándar
+    counts: Dict[str, int] = {key: int(round(total * ratio)) for key, ratio in ratios.items()}
+    
+    # 2. Garantizar estratificación mínima para validación
+    # Si tenemos al menos 2 muestras, una DEBE ir a validación para evaluación honesta
+    if total >= 2 and counts.get("val", 0) == 0:
+        counts["val"] = 1
+        # Restar de train (asumimos que es el mayor)
+        if counts.get("train", 0) > 0:
+            counts["train"] -= 1
+
+    # 3. Garantizar estratificación mínima para test si hay suficiente margen
+    if total >= 3 and counts.get("test", 0) == 0:
+        counts["test"] = 1
+        if counts.get("train", 0) > 1: # Mantener al menos 1 en train
+            counts["train"] -= 1
+        elif counts.get("val", 0) > 1:
+            counts["val"] -= 1
+
+    # 4. Ajuste final para que la suma sea exacta
+    current_total = sum(counts.values())
+    diff = total - current_total
+    
+    if diff != 0:
+        # Ajustar la diferencia en el split de entrenamiento
+        counts["train"] = max(0, counts.get("train", 0) + diff)
+        
+    return counts
 
 
-def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int, target_language: str | None = None, use_phonemes: bool = False) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
+def _load_all_samples(
+    config: Dict[str, Any], 
+    target_sr: int, 
+    seed: int, 
+    target_language: str | None = None, 
+    use_phonemes: bool = False,
+    class_names: List[str] | None = None
+) -> Tuple[List[str], Dict[str, List[AudioSample]]]:
     source_key = "phoneme_samples" if use_phonemes else "generated_samples"
     generated = config.get(source_key, {}) or {}
     
@@ -169,7 +197,14 @@ def _load_all_samples(config: Dict[str, Any], target_sr: int, seed: int, target_
                             final_generated[word] = []
                         final_generated[word].extend(variations)
 
-    words = sorted(final_generated.keys())
+    if class_names:
+        # Forzar clases específicas
+        words = list(class_names)
+        # Filtrar solo las que existen en final_generated que estén en words
+        final_generated = {k: v for k, v in final_generated.items() if k in words}
+    else:
+        words = sorted(final_generated.keys())
+
     rng = random.Random(seed)
 
     samples_by_word: Dict[str, List[AudioSample]] = {word: [] for word in words}
@@ -223,10 +258,11 @@ def build_audio_datasets(
     *,
     seed: int,
     split_ratios: Dict[str, float] | None = None,
-    target_sr: int = WAV2VEC_SR,
+    target_sr: int = AUDIO_SR,
     whitelist_words: List[str] | None = None,
     target_language: str | None = None,
     use_phonemes: bool = False,
+    class_names: List[str] | None = None,
 ) -> Dict[str, AudioWordDataset]:
     config = load_master_dataset_config()
     ratios = split_ratios or DEFAULT_AUDIO_SPLIT_RATIOS
@@ -234,7 +270,14 @@ def build_audio_datasets(
     if not math.isclose(ratio_total, 1.0, rel_tol=1e-3):
         raise ValueError("Las proporciones de split de audio deben sumar 1.0")
 
-    words, samples_by_word = _load_all_samples(config, target_sr=target_sr, seed=seed, target_language=target_language, use_phonemes=use_phonemes)
+    words, samples_by_word = _load_all_samples(
+        config, 
+        target_sr=target_sr, 
+        seed=seed, 
+        target_language=target_language, 
+        use_phonemes=use_phonemes,
+        class_names=class_names
+    )
     
     if whitelist_words:
         words = [w for w in words if w in whitelist_words]
@@ -282,11 +325,12 @@ def build_audio_dataloaders(
     num_workers: int,
     seed: int,
     split_ratios: Dict[str, float] | None = None,
-    target_sr: int = WAV2VEC_SR,
+    target_sr: int = AUDIO_SR,
     shuffle_train: bool = True,
     whitelist_words: List[str] | None = None,
     target_language: str | None = None,
     use_phonemes: bool = False,
+    class_names: List[str] | None = None,
 ) -> Tuple[AudioWordDataset, AudioWordDataset, AudioWordDataset, Dict[str, DataLoader]]:
     datasets = build_audio_datasets(
         seed=seed, 
@@ -294,7 +338,8 @@ def build_audio_dataloaders(
         target_sr=target_sr, 
         whitelist_words=whitelist_words,
         target_language=target_language,
-        use_phonemes=use_phonemes
+        use_phonemes=use_phonemes,
+        class_names=class_names
     )
 
     loaders: Dict[str, DataLoader] = {}

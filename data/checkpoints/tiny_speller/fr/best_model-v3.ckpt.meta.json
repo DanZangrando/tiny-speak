@@ -1,0 +1,118 @@
+{
+  "timestamp": 1776714047.8911564,
+  "date": "2026-04-20 16:40:47",
+  "config": {
+    "epochs": 5,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "dtw": 0.0,
+      "perceptual": 0.5
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/fr/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/fr/best_model.ckpt",
+    "language": "fr",
+    "classes": [
+      "abeille",
+      "araignée",
+      "baleine",
+      "canard",
+      "cerf",
+      "chat",
+      "cheval",
+      "chien",
+      "chèvre",
+      "cochon",
+      "crabe",
+      "dauphin",
+      "fourmi",
+      "girafe",
+      "grenouille",
+      "lapin",
+      "lion",
+      "loup",
+      "manchot",
+      "mouton",
+      "oie",
+      "oiseau",
+      "ours",
+      "papillon",
+      "pieuvre",
+      "poisson",
+      "poulet",
+      "renard",
+      "requin",
+      "serpent",
+      "singe",
+      "souris",
+      "tigre",
+      "tortue",
+      "vache",
+      "zèbre",
+      "écureuil",
+      "éléphant",
+      "étoile"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/fr/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 0.042553190141916275,
+    "train_g2p_structural_mse": 0.0302052590996027,
+    "train_loss": 0.0302052590996027,
+    "val_phoneme_acc": 0.07003828883171082,
+    "val_g2p_structural_mse": 0.022813070565462112,
+    "val_loss": 0.022813070565462112,
+    "epoch": 4
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.15140022337436676,
+      "train_loss": 0.15140022337436676,
+      "val_phoneme_acc": 0.008314746432006359,
+      "val_g2p_structural_mse": 0.15039631724357605,
+      "val_loss": 0.15039631724357605,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.06112470477819443,
+      "train_loss": 0.06112470477819443,
+      "val_phoneme_acc": 0.0,
+      "val_g2p_structural_mse": 0.07937885820865631,
+      "val_loss": 0.07937885820865631,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.03814249858260155,
+      "train_loss": 0.03814249858260155,
+      "val_phoneme_acc": 0.0,
+      "val_g2p_structural_mse": 0.054958123713731766,
+      "val_loss": 0.054958123713731766,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.04841792210936546,
+      "train_loss": 0.04841792210936546,
+      "val_phoneme_acc": 0.011763927526772022,
+      "val_g2p_structural_mse": 0.03451525419950485,
+      "val_loss": 0.03451525419950485,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 0.042553190141916275,
+      "train_g2p_structural_mse": 0.0302052590996027,
+      "train_loss": 0.0302052590996027,
+      "val_phoneme_acc": 0.07003828883171082,
+      "val_g2p_structural_mse": 0.022813070565462112,
+      "val_loss": 0.022813070565462112,
+      "epoch": 4
+    }
+  ]
+}

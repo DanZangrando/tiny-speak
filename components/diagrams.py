@@ -100,6 +100,55 @@ def get_listener_diagram():
 
     return dot
 
+def get_latent_mapping_diagram(module_name="TinySpeller", stage="G2P"):
+    """
+    Versión simplificada y técnica del mapeo entre espacios latentes.
+    """
+    dot = graphviz.Digraph(comment='Latent Mapping Diagram')
+    dot.attr(rankdir='LR', bgcolor='#0e1117', fontcolor='white')
+    dot.attr('node', style='filled', fontname='Helvetica', color='white', fontcolor='white', shape='box', border='2')
+    
+    # Estilo de nodos
+    visual_color = '#00838f'
+    neural_color = '#880e4f'
+    auditory_color = '#ab47bc'
+    
+    if stage == "G2P":
+        dot.node('Input', 'Input:\nGrafema (Imagen/ID)', fillcolor='#424242')
+        dot.node('Encoder', 'Sensor Visual:\nTinyEyes (Frozen)', fillcolor=visual_color)
+        dot.node('LatentV', 'Neural Image (IT):\nEspacio Visual (512-d)', fillcolor=visual_color, shape='parallelogram')
+        dot.node('Projector', f'Proyector:\n{module_name}\n(Pointwise MLP)', fillcolor=neural_color, style='filled,bold')
+        dot.node('LatentA', 'Neural Image (Phonetic):\nEspacio Auditivo (256-d)', fillcolor=auditory_color, shape='parallelogram')
+        dot.node('Decoder', 'Sensor Auditivo:\nTinyEars (Frozen)', fillcolor=auditory_color)
+        
+        dot.edge('Input', 'Encoder')
+        dot.edge('Encoder', 'LatentV')
+        dot.edge('LatentV', 'Projector')
+        dot.edge('Projector', 'LatentA')
+        dot.edge('LatentA', 'Decoder')
+        
+        # Loss
+        dot.node('Loss', 'Perceptual Loss\n(Neural Match)', color='#ff5252', fontcolor='#ff5252', shape='circle')
+        dot.edge('LatentA', 'Loss', color='#ff5252', style='dashed')
+        dot.edge('Decoder', 'Loss', color='#ff5252', style='dashed', label='Target')
+
+    else:
+        dot.node('Input', 'Input:\nSecuencia de Fonemas', fillcolor=auditory_color)
+        dot.node('Projector', f'Integrador:\n{module_name}\n(Sequential Bi-LSTM)', fillcolor=neural_color, style='filled,bold')
+        dot.node('LatentW', 'Neural Image (Word):\nRepresentación Léxica', fillcolor='#00acc1', shape='parallelogram')
+        dot.node('Decoder', 'Sensor Auditivo Words:\nTinyEars (Frozen)', fillcolor='#00acc1')
+        
+        dot.edge('Input', 'Projector')
+        dot.edge('Projector', 'LatentW')
+        dot.edge('LatentW', 'Decoder')
+        
+        # Loss
+        dot.node('Loss', 'Perceptual Loss\n(Semantic Match)', color='#ff5252', fontcolor='#ff5252', shape='circle')
+        dot.edge('LatentW', 'Loss', color='#ff5252', style='dashed')
+        dot.edge('Decoder', 'Loss', color='#ff5252', style='dashed', label='Target')
+
+    return dot
+
 def get_reader_diagram():
     dot = graphviz.Digraph('TinyReader', comment='TinyReader Two-Stage Architecture')
     dot.attr(rankdir='TB', bgcolor='#0e1117', fontname='Helvetica', fontcolor='white')
@@ -130,16 +179,16 @@ def get_reader_diagram():
         # Stage 1: G2P
         with c.subgraph(name='cluster_g2p') as g2p:
             g2p.attr(label='Stage 1: Grapheme-to-Phoneme', color='#ff4081', fontcolor='#ff4081', style='dotted')
-            g2p.node('ReaderG2P', 'TinyReaderG2P\n(LSTM Decoder)', fillcolor='#880e4f')
-            g2p.node('PhonemeEmbed', 'Phoneme Embeddings\n(Intermediate)', fillcolor='#ab47bc', shape='parallelogram')
+            g2p.node('ReaderG2P', 'TinySpeller\n(Pointwise MLP)', fillcolor='#880e4f')
+            g2p.node('PhonemeEmbed', 'Phoneme Embeddings\n(Neural Image)', fillcolor='#ab47bc', shape='parallelogram')
             
             g2p.edge('ReaderG2P', 'PhonemeEmbed')
 
         # Stage 2: P2W
         with c.subgraph(name='cluster_p2w') as p2w:
             p2w.attr(label='Stage 2: Phoneme-to-Word', color='#f50057', fontcolor='#f50057', style='dotted')
-            p2w.node('ReaderP2W', 'TinyReaderP2W\n(LSTM Decoder)', fillcolor='#c2185b')
-            p2w.node('WordEmbed', 'Word Embeddings\n(Final Audio)', fillcolor='#00acc1', shape='parallelogram')
+            p2w.node('ReaderP2W', 'TinyReader\n(Sequential Integrator Bi-LSTM)', fillcolor='#c2185b')
+            p2w.node('WordEmbed', 'Word Embedding\n(Many-to-One)', fillcolor='#00acc1', shape='parallelogram')
             
             p2w.edge('ReaderP2W', 'WordEmbed')
             
@@ -217,7 +266,11 @@ def get_tiny_reader_diagram():
         s1.node('VisualPathway', 'Visual Pathway\n(Frozen)', fillcolor='#424242', fontcolor='#bdbdbd')
         s1.node('SpellingEmb', 'Spelling Embeddings\n(Letters)', fillcolor='#00838f', shape='ellipse')
         
-        s1.node('ReaderG2P', 'Reader G2P\n(Trainable)', fillcolor='#d81b60', penwidth='3', color='#ff4081')
+        # Reader G2P Internals (Pointwise Projector)
+        with s1.subgraph(name='cluster_g2p_internal') as g2p_int:
+            g2p_int.attr(label='TinySpeller (Pointwise MLP)', color='#ff4081', fontcolor='#ff4081', style='solid')
+            g2p_int.node('G2P_Proj', 'Projector\n(Linear + GELU)', fillcolor='#880e4f')
+            g2p_int.edge('SpellingEmb', 'G2P_Proj')
         
         s1.node('PhonemeEmb', 'Phoneme Embeddings\n(Predicted)', fillcolor='#fdd835', fontcolor='black', shape='ellipse')
         
@@ -226,8 +279,8 @@ def get_tiny_reader_diagram():
 
         s1.edge('InputText', 'VisualPathway')
         s1.edge('VisualPathway', 'SpellingEmb')
-        s1.edge('SpellingEmb', 'ReaderG2P')
-        s1.edge('ReaderG2P', 'PhonemeEmb')
+        s1.edge('SpellingEmb', 'G2P_Enc')
+        s1.edge('G2P_Proj', 'PhonemeEmb')
         s1.edge('PhonemeEmb', 'PhonemeListener')
         s1.edge('PhonemeListener', 'LossG2P')
 
@@ -239,7 +292,15 @@ def get_tiny_reader_diagram():
         s2.node('ReaderG2P_Frozen', 'Reader G2P\n(Frozen)', fillcolor='#424242', fontcolor='#bdbdbd')
         s2.node('PhonemeEmb_In', 'Phoneme Embeddings\n(Input)', fillcolor='#fdd835', fontcolor='black', shape='ellipse')
         
-        s2.node('ReaderP2W', 'Reader P2W\n(Trainable)', fillcolor='#d81b60', penwidth='3', color='#ff4081')
+        # Reader P2W Internals (Sequential Integrator)
+        with s2.subgraph(name='cluster_p2w_internal') as p2w_int:
+            p2w_int.attr(label='TinyReader (Bi-LSTM Integrator)', color='#f50057', fontcolor='#f50057', style='solid')
+            p2w_int.node('P2W_Enc', 'Encoder\n(Bi-LSTM)', fillcolor='#880e4f')
+            p2w_int.node('P2W_Collapse', 'Aggregation\n(Last Hidden)', fillcolor='#ad1457', shape='circle')
+            p2w_int.node('P2W_Head', 'Projection Head\n(Linear)', fillcolor='#c2185b')
+            
+            p2w_int.edge('P2W_Enc', 'P2W_Collapse')
+            p2w_int.edge('P2W_Collapse', 'P2W_Head')
         
         s2.node('WordEmb', 'Word Embeddings\n(Predicted)', fillcolor='#43a047', shape='ellipse')
         
@@ -247,8 +308,8 @@ def get_tiny_reader_diagram():
         s2.node('LossP2W', 'Loss P2W\n(Soft-DTW + Perceptual)', fillcolor='#e53935', shape='diamond')
 
         s2.edge('ReaderG2P_Frozen', 'PhonemeEmb_In')
-        s2.edge('PhonemeEmb_In', 'ReaderP2W')
-        s2.edge('ReaderP2W', 'WordEmb')
+        s2.edge('PhonemeEmb_In', 'P2W_Enc')
+        s2.edge('P2W_Head', 'WordEmb')
         s2.edge('WordEmb', 'WordListener')
         s2.edge('WordListener', 'LossP2W')
 
@@ -346,11 +407,11 @@ def get_full_flow_diagram():
     dot.edge('Logits', 'TinyEyes', color='#ff5252', fontcolor='#ff5252', label='Cross Entropy Loss\n(grafema -> etiqueta)', dir='back')
 
     # TinySpeller Alignment & Perceptual Loss
-    dot.edge('EmbFonema_Img', 'EmbFonema_Real', color='#ff5252', fontcolor='#ff5252', label='Soft-DTW (Alineación)', style='dashed', dir='both')
+    dot.edge('EmbFonema_Img', 'EmbFonema_Real', color='#ff5252', fontcolor='#ff5252', label='MSE (Direct Match)', style='dashed', dir='both')
     dot.edge('EmbFonema_Img', 'ClasificadorFonema', color='#ff5252', fontcolor='#ff5252', label='Cross Entropy Loss\n(Perceptual Loss)')
 
     # TinyReader Alignment & Perceptual Loss
-    dot.edge('EmbPalabra_Img', 'EmbPalabra_Real', color='#ff5252', fontcolor='#ff5252', label='Soft-DTW (Alineación)', style='dashed', dir='both')
+    dot.edge('EmbPalabra_Img', 'EmbPalabra_Real', color='#ff5252', fontcolor='#ff5252', label='MSE (Léxico Match)', style='dashed', dir='both')
     dot.edge('EmbPalabra_Img', 'ClasificadorPalabraReal', color='#ff5252', fontcolor='#ff5252', label='Cross Entropy Loss\n(Perceptual Loss)')
 
     # TinyEars Internal Losses

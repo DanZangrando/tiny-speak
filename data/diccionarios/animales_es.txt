@@ -37,4 +37,3 @@ tiburón
 pulpo
 cangrejo
 estrella
-pez

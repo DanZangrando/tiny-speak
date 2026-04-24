@@ -7,33 +7,26 @@ import pytorch_lightning as pl
 from pathlib import Path
 import torch
 import pandas as pd
-import time
-from datetime import datetime
 import json
 import numpy as np
-import matplotlib.pyplot as plt
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from components.modern_sidebar import display_modern_sidebar
 from components.diagrams import get_listener_diagram
 from components.code_viewer import get_function_source
-from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report, plot_probability_matrix
-from models import PhonologicalPathway
-from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
-from training.audio_module import PhonologicalPathwayLightning
-from training.config import load_master_dataset_config
-from utils import (
-    WAV2VEC_DIM,
-    WAV2VEC_SR,
-    encontrar_device,
-    get_default_words,
-    load_waveform,
-    list_checkpoints,
-    save_model_metadata,
-    RealTimePlotCallback
-)
+from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report
+from models import TinyEars
+from training.audio_dataset import build_audio_dataloaders
+from training.audio_module import TinyEarsLightning
+from training.config import load_master_dataset_config, save_master_dataset_config
+from utils.device import encontrar_device
+from utils.checkpoints import list_checkpoints
 
-# Configurar página
+def format_accuracy(val):
+    """Asegura que el accuracy esté en rango 0-1 antes de aplicar .2%"""
+    if val > 1.0:
+        return val / 100.0
+    return val
+
 st.set_page_config(
     page_title="TinyEars - Fonemas",
     page_icon="👂",
@@ -63,15 +56,14 @@ def get_custom_css():
     </style>
     """
 
-class ListenerHistoryCallback(pl.Callback):
-    def __init__(self):
-        self.history = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        metrics = {k: v.item() if isinstance(v, torch.Tensor) else v 
-                  for k, v in trainer.callback_metrics.items()}
-        metrics['epoch'] = trainer.current_epoch
-        self.history.append(metrics)
+def get_active_models():
+    ckpts = list_checkpoints("tiny_ears_phonemes")
+    active = {}
+    for c in ckpts:
+        lang = c['meta'].get('config', {}).get('language')
+        if lang and lang not in active:
+            active[lang] = c
+    return active
 
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
@@ -79,452 +71,273 @@ def main():
     
     st.markdown('<h1 class="main-header">👂 TinyEars: Reconocimiento de Fonemas</h1>', unsafe_allow_html=True)
     
-    tabs = st.tabs(["📐 Arquitectura", "🏃‍♂️ Entrenamiento", "💾 Modelos Guardados", "🧪 Laboratorio"])
+    tabs = st.tabs([
+        "📉 Entrenamiento Lotes", 
+        "🧪 Historial y Resultados", 
+        "🔍 Laboratorio Interactivo",
+        "📐 Arquitectura Estructural"
+    ])
+    config = load_master_dataset_config()
+    languages = config.get('experiment_config', {}).get('languages', ['es', 'en', 'fr'])
+    active_models = get_active_models()
 
     # ==========================================
-    # TAB 1: ARQUITECTURA
+    # TAB 1: ENTRENAMIENTO Y MODELOS
     # ==========================================
     with tabs[0]:
-        
-        st.markdown("""
-        ### 👂 TinyEars: La Vía Auditiva (Phonological Pathway)
+        st.markdown("### 📊 Modelos Activos")
+        if not active_models:
+            st.info("No hay modelos entrenados actualmente. Inicia el entrenamiento por lotes abajo.")
+        else:
+            cols = st.columns(len(languages))
+            for i, lang in enumerate(languages):
+                with cols[i]:
+                    st.markdown(f"#### Idioma: {lang.upper()}")
+                    if lang in active_models:
+                        ckpt = active_models[lang]
+                        meta = ckpt.get('meta', {})
+                        st.success("✅ Modelo Listo")
+                        st.json({
+                            "Épocas": meta.get('config', {}).get('epochs'),
+                            "Val Loss": round(meta.get('metrics', {}).get('val_loss', 0.0), 4),
+                            "Actualizado": ckpt.get('date', 'Desconocido')
+                        })
+                    else:
+                        st.warning("⚠️ Pendiente de entrenar")
 
-        #### 1. Evolución de la Arquitectura: De Wav2Vec 2.0 a TinyEars
-        Anteriormente, el sistema utilizaba **Wav2Vec 2.0**, un modelo masivo pre-entrenado con miles de horas de audio. Aunque potente, su complejidad y opacidad dificultaban la interpretación biológica directa.
-        
-        **TinyEars** representa un cambio hacia una arquitectura "Tiny" personalizada y entrenada desde cero:
-        *   **Plausibilidad Biológica:** Al reducir drásticamente el número de parámetros, el modelo se aproxima más a la escala de los circuitos neuronales auditivos tempranos.
-        *   **Emergencia de Características:** Entrenar desde cero ("tabula rasa") nos permite observar cómo emergen los detectores de fonemas y rasgos acústicos, similar al desarrollo auditivo infantil, sin los sesgos de un pre-entrenamiento masivo.
+        st.divider()
+        st.markdown("### ⚙️ Iniciar Entrenamiento")
+        train_config = config.get("training_params", {}).get("tiny_ears_phonemes", {})
+        col1, col2 = st.columns(2)
+        with col1:
+            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=train_config.get("epochs", 50))
+            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=train_config.get("batch_size", 16))
+        with col2:
+            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=train_config.get("lr", 1e-3), format="%.5f")
+            
+        if st.button("🚀 Iniciar Entrenamiento por Lotes (Todos los Idiomas)", type="primary"):
+            if "training_params" not in config:
+                config["training_params"] = {}
+            config["training_params"]["tiny_ears_phonemes"] = {
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr
+            }
+            save_master_dataset_config(config)
+            
+            from training.runner import train_listener
+            
+            st.markdown("### 📈 Progreso de Entrenamiento...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            plots_container = st.container()
 
-        #### 2. Arquitectura Cognitiva
-        La red modela la transformación del sonido en significado fonológico:
-        
-        *   **Input (Cóclea):** Espectrograma Mel (representación tonotópica del sonido).
-        *   **Feature Extractor (Tronco Encefálico):** Capas convolucionales (CNN) que extraen características temporales y espectrales básicas (ataques, formantes).
-        *   **Context Network (Corteza Auditiva):** Transformer Encoder que integra la información en el tiempo, permitiendo la percepción de fonemas dependiente del contexto.
-
-        #### 3. Input/Output
-        *   **Entrada:** Audio Raw o Espectrograma.
-        *   **Salida:** Secuencia de Embeddings Fonémicos (Latent Space) y probabilidades de fonemas.
-        """)
-        
-        st.graphviz_chart(get_listener_diagram())
+            for i, lang in enumerate(languages):
+                status_text.markdown(f"**Entrenando TinyEars (Fonemas) para {lang.upper()}... ({i+1}/{len(languages)})**")
+                
+                phoneme_data = config.get('phoneme_samples', {}).get(lang, {})
+                if not phoneme_data:
+                    st.warning(f"Saltando {lang}: No se encontraron datos de fonemas.")
+                    continue
+                
+                with plots_container:
+                    st.markdown(f"#### Entrenamiento: {lang.upper()}")
+                    col_plot1, col_plot2 = st.columns(2)
+                    plot_loss = col_plot1.empty()
+                    plot_acc = col_plot2.empty()
+                plot_placeholders = (plot_loss, plot_acc)
+                
+                train_conf = {
+                    "epochs": epochs,
+                    "lr": lr,
+                    "batch_size": batch_size,
+                    "use_phonemes": True
+                }
+                
+                try:
+                    ckpt_path, hist = train_listener(lang, train_conf, plot_placeholders=plot_placeholders)
+                    st.success(f"✅ {lang.upper()} guardado.")
+                except Exception as e:
+                    st.error(f"❌ Error en {lang}: {e}")
+                
+                progress_bar.progress((i + 1) / len(languages))
+            
+            st.success("🎉 Entrenamientos completados. Por favor refresca la página.")
 
     # ==========================================
-    # TAB 2: ENTRENAMIENTO
+    # TAB 2: RESULTADOS GLOBALES E HISTORIAL
     # ==========================================
     with tabs[1]:
-        st.markdown("### ⚙️ Configuración del Entrenamiento")
-        
-        # Cargar configuración del dataset
-        config = load_master_dataset_config()
-        # Aquí idealmente filtraríamos para mostrar solo datasets de fonemas si existen
-        # Por ahora asumimos que el usuario selecciona un dataset apropiado
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### Hiperparámetros")
-            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=50)
-            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=16)
-            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=1e-3, format="%.5f")
+        st.markdown("### 🧪 Historial y Resultados Generales")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
+        else:
+            from components.analytics import plot_training_history, plot_confusion_matrix, display_classification_report, plot_latent_space_pca
+            import pickle
             
-        with col2:
-            st.markdown("#### Dataset")
-            target_language = st.selectbox("Idioma Objetivo", config.get('experiment_config', {}).get('languages', ['es']))
+            st.markdown("#### 🌍 Comparativa de Rendimiento por Idioma")
+            eval_cols = st.columns(len(active_models))
             
-            # Mostrar palabras/fonemas disponibles
-            # Para TinyEars Phonemes, buscamos en phoneme_samples
-            phoneme_data = config.get('phoneme_samples', {}).get(target_language, {})
-            if phoneme_data:
-                # Filtrar vacíos y ordenar para coincidir con el dataset
-                words = sorted([w for w, s in phoneme_data.items() if s])
-            else:
-                words = []
-                
-            st.info(f"Entrenando sobre {len(words)} fonemas.")
-            with st.expander("Ver Vocabulario (Fonemas)"):
-                st.write(words)
-
-        if st.button("🚀 Iniciar Entrenamiento de Fonemas", type="primary"):
-            # Setup
-            pl.seed_everything(42)
-            
-            # 1. Construir Dataloaders PRIMERO para obtener el vocabulario real (filtrado por archivos existentes)
-            try:
-                train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
-                    batch_size=batch_size,
-                    target_language=target_language,
-                    num_workers=4,
-                    seed=42,
-                    use_phonemes=True
-                )
-                
-                # Actualizar words con lo que realmente hay en el dataset
-                words = train_ds.class_names
-                st.success(f"Dataset cargado con {len(words)} fonemas válidos.")
-                
-            except Exception as e:
-                st.error(f"Error cargando datos: {e}")
-                st.stop()
-                
-            # 2. Inicializar Modelo con el vocabulario CORRECTO
-            if not words:
-                 st.error("⚠️ No se encontraron fonemas válidos en el dataset. Revisa la configuración y los archivos.")
-                 st.stop()
-                 
-            model = PhonologicalPathwayLightning(
-                class_names=words,
-                learning_rate=lr
-            )
-            
-            # Callbacks
-            history_cb = ListenerHistoryCallback()
-            early_stop_callback = EarlyStopping(
-                monitor="val_loss",
-                min_delta=0.001,
-                patience=10,
-                verbose=True,
-                mode="min"
-            )
-            
-            checkpoint_callback = ModelCheckpoint(
-                dirpath="models/listener_checkpoints",
-                filename="phoneme_listener-{epoch:02d}-{val_loss:.2f}",
-                save_top_k=1,
-                monitor="val_loss",
-                mode="min"
-            )
-            
-            trainer = pl.Trainer(
-                max_epochs=epochs,
-                accelerator="auto",
-                devices=1,
-                callbacks=[history_cb, early_stop_callback, checkpoint_callback],
-                enable_progress_bar=True,
-                default_root_dir="lightning_logs/tiny_ears_phonemes"
-            )
-            
-            # Placeholders
-            st.markdown("### 📈 Progreso")
-            col_plot1, col_plot2 = st.columns(2)
-            with col_plot1:
-                plot_loss = st.empty()
-            with col_plot2:
-                plot_acc = st.empty()
-                
-            realtime_cb = RealTimePlotCallback(plot_loss, plot_acc)
-            trainer.callbacks.append(realtime_cb)
-            
-            with st.spinner("Entrenando Oído para Fonemas..."):
-                trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
-                
-            st.success("Entrenamiento completado!")
-            
-            # Guardar
-            save_dir = Path("models/listener")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            final_path = save_dir / f"phoneme_listener_{target_language}_{timestamp}.ckpt"
-            trainer.save_checkpoint(final_path)
-            
-            meta_config = {
-                "epochs": epochs, "lr": lr, "batch_size": batch_size,
-                "language": target_language,
-                "vocab": words,
-                "type": "phoneme"
-            }
-            final_metrics = history_cb.history[-1] if history_cb.history else {}
-            save_model_metadata(final_path, meta_config, final_metrics)
-            
-            if history_cb.history:
-                pd.DataFrame(history_cb.history).to_csv(final_path.with_suffix(".csv"), index=False)
-                
-            st.info(f"Modelo guardado en {final_path}")
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with eval_cols[i]:
+                    st.markdown(f"## 🌍 {lang_eval.upper()}")
+                    meta = ckpt_info.get('meta', {})
+                    metrics = meta.get('metrics', {})
+                    
+                    # Métricas Rápidas
+                    acc_raw = metrics.get('val_acc', metrics.get('val_top1', 0.0))
+                    st.metric("Val Acc", f"{format_accuracy(acc_raw):.2%}")
+                    
+                    # 1. Historial
+                    st.markdown("#### 📈 Historial")
+                    plot_training_history(meta.get('history', []))
+                    
+                    try:
+                        eval_path = Path(ckpt_info['path']).parent / "eval_results.pkl"
+                        if eval_path.exists():
+                            with open(eval_path, "rb") as f:
+                                data = pickle.load(f)
+                            
+                            # 2. Clasificación
+                            conf = data.get("confusion", {})
+                            if conf and conf.get("y_true"):
+                                st.markdown("#### 🎯 Matriz de Confusión")
+                                plot_confusion_matrix(conf["y_true"], conf["y_pred"], conf["class_names"])
+                                display_classification_report(conf["y_true"], conf["y_pred"], conf["class_names"])
+                            
+                            # 3. PCA
+                            embs = data.get("embeddings", [])
+                            labels = data.get("labels", [])
+                            if len(embs) > 0:
+                                st.markdown("#### 🌌 Espacio Latente")
+                                # Fallback robusto para nombres de clases
+                                classes_to_use = conf.get("class_names") or meta.get('config', {}).get('classes') or []
+                                if classes_to_use:
+                                    plot_latent_space_pca(embs, labels, classes_to_use)
+                                else:
+                                    st.warning("No se encontraron nombres de clases para el PCA.")
+                            
+                            # 4. Muestras
+                            samples = data.get("samples", [])
+                            if samples:
+                                st.markdown("#### 📄 Muestras Reales")
+                                for s in samples[:5]:
+                                    st.markdown(f"""
+                                    <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid #11998e;">
+                                        <b>Real:</b> {s['target']} | <b>Pred:</b> {s['prediction']}<br>
+                                        <small>Conf: {s.get('confidence', 0.0):.2%}</small>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        else:
+                            st.warning("⚠️ Debes re-entrenar para ver validación detallada.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
     # ==========================================
-    # TAB 3: MODELOS GUARDADOS
+    # TAB 3: LABORATORIO INTERACTIVO
     # ==========================================
     with tabs[2]:
-        st.markdown("### 📚 Modelos de Fonemas")
-        all_ckpts = list_checkpoints("listener")
-        # Filtrar solo los que parecen de fonemas
-        phoneme_ckpts = [c for c in all_ckpts if "phoneme" in c['filename'] or c.get('meta', {}).get('config', {}).get('type') == 'phoneme']
-        
-        if not phoneme_ckpts:
-            st.info("No hay modelos de fonemas entrenados.")
+        st.markdown("### 🔍 Laboratorio Interactivo")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
         else:
-            opts = {c['filename']: c for c in phoneme_ckpts}
-            sel_key = st.selectbox("Seleccionar Modelo", list(opts.keys()))
-            sel_ckpt = opts[sel_key]
+            lang_lab = st.selectbox("Seleccionar Idioma para Pruebas Manuales", list(active_models.keys()), key="lab_lang")
+            ckpt_lab = active_models[lang_lab]
             
-            col_info, col_actions = st.columns([3, 1])
-            with col_info:
-                st.markdown(f"**Archivo:** `{sel_ckpt['filename']}`")
-                st.json(sel_ckpt.get('meta', {}))
-                
-            with col_actions:
-                if st.button("🗑️ Eliminar", key="del_ph"):
-                    Path(sel_ckpt['path']).unlink(missing_ok=True)
-                    st.rerun()
-
-            st.divider()
-            st.markdown("### 🧪 Evaluación Profunda")
-            if st.button("🚀 Ejecutar Evaluación Completa", key="eval_ph"):
-                with st.spinner("Cargando modelo y datos..."):
+            if st.button(f"🎧 Cargar 1 Audio de {lang_lab.upper()} y predecir fonema", type="primary"):
+                with st.spinner("Inferiendo..."):
                     try:
-                        # 1. Cargar Modelo
-                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
-                        class_names = []
-                        target_lang = None
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta = json.load(f)
-                                config = meta.get('config', {})
-                                class_names = config.get('vocab', [])
-                                target_lang = config.get('language')
+                        class_names = ckpt_lab.get('meta', {}).get('config', {}).get('classes', [])
+                        meta_config = ckpt_lab.get('meta', {}).get('config', {})
+                        model_hparams = {k: v for k, v in meta_config.items() if k in ["hidden_dim", "num_conv_layers", "num_transformer_layers", "nhead"]}
+                        if not model_hparams:
+                            model_hparams = config.get("architectures", {}).get("tiny_ears_phonemes", {})
                         
-                        if not class_names:
-                            st.warning("No se encontraron class_names en metadata. Usando default.")
-                            class_names = get_default_words()
-
-                        model = PhonologicalPathwayLightning.load_from_checkpoint(
-                            sel_ckpt['path'],
-                            class_names=class_names
+                        model = TinyEarsLightning.load_from_checkpoint(
+                            ckpt_lab['path'],
+                            class_names=class_names,
+                            **model_hparams
                         )
                         model.eval()
                         device = encontrar_device()
                         model.to(device)
                         
-                        # 2. Cargar Datos (Validation Set)
-                        if not target_lang:
-                            target_lang = 'es' # Fallback
-                            
                         _, _, _, loaders = build_audio_dataloaders(
-                            batch_size=32,
-                            target_language=target_lang,
-                            num_workers=0,
-                            use_phonemes=True,
-                            seed=42
+                            batch_size=32, target_language=lang_lab, num_workers=0, use_phonemes=True, seed=42
                         )
-                        val_loader = loaders['val']
                         
-                        # 3. Inferencia
-                        all_preds = []
-                        all_labels = []
-                        all_embeddings = []
+                        target_class = st.selectbox("Seleccionar fonema a predecir", class_names, key=f"sel_03_{lang_lab}")
+                        target_idx = class_names.index(target_class)
                         
-                        with torch.no_grad():
-                            for batch in val_loader:
-                                waveforms = [w.to(device) for w in batch["waveforms"]]
-                                labels = batch["label"].to(device)
+                        val_ds = loaders['val'].dataset
+                        found_item = None
+                        for i in range(len(val_ds)):
+                            item = val_ds[i]
+                            if int(item["label"]) == target_idx:
+                                found_item = item
+                                break
                                 
-                                # Forward
-                                # PhonologicalPathwayLightning.forward solo devuelve logits.
-                                # Accedemos al modelo interno para obtener embeddings también.
-                                if isinstance(waveforms, list):
-                                    from torch.nn.utils.rnn import pad_sequence
-                                    waveforms_padded = pad_sequence(waveforms, batch_first=True).to(device)
-                                else:
-                                    waveforms_padded = waveforms
-
-                                logits, embeddings = model.model(waveforms_padded)
-                                
-                                # Pooling para clasificación (si es necesario, el modelo ya lo hace en forward pero devuelve encoded sequence)
-                                # PhonologicalPathway.forward devuelve (logits, encoded)
-                                # logits ya es (B, num_classes)
-                                
-                                preds = torch.argmax(logits, dim=1)
-                                
-                                all_preds.extend(preds.cpu().numpy())
-                                all_labels.extend(labels.cpu().numpy())
-                                
-                                # Pooling de embeddings para PCA (Mean over time)
-                                # encoded: (B, T, D)
-                                pooled_emb = embeddings.mean(dim=1)
-                                all_embeddings.extend(pooled_emb.cpu().numpy())
-                                
-                        # 4. Visualización
-                        st.success("Evaluación completada.")
-                        
-                        # Matriz de Confusión
-                        st.markdown("#### Matriz de Confusión")
-                        plot_confusion_matrix(all_labels, all_preds, class_names)
-                        
-                        # Reporte
-                        st.markdown("#### Reporte de Clasificación")
-                        display_classification_report(all_labels, all_preds, class_names)
-                        
-                        # PCA
-                        st.markdown("#### Espacio Latente (PCA)")
-                        # Usamos plot_latent_space_pca de analytics
-                        # Necesitamos pasar embeddings, labels (indices) y classes (nombres)
-                        
-                        # Importar aquí para evitar circularidad si no está arriba
-                        from components.analytics import plot_latent_space_pca
-                        plot_latent_space_pca(np.array(all_embeddings), all_labels, class_names)
-                        
+                        if found_item is not None:
+                            waveform = found_item["waveform"].to(device)
+                            label = int(found_item["label"])
+                            
+                            from torch.nn.utils.rnn import pad_sequence
+                            wf_padded = pad_sequence([waveform], batch_first=True).to(device)
+                            logits, _ = model.model(wf_padded)
+                            pred = torch.argmax(logits, dim=1)[0].item()
+                            
+                            st.markdown(f"**Verdadero Fonema:** `{class_names[label]}`")
+                            st.markdown(f"**Fonema Predicho:** `{class_names[pred]}`")
+                            
+                            sr = 16000
+                            st.audio(waveform.cpu().numpy(), sample_rate=sr)
+                            
+                            if pred == label:
+                                st.success("¡Predicción correcta!")
+                            else:
+                                st.warning("Predicción incorrecta.")
+                        else:
+                            st.warning("No se encontraron muestras en validación.")
                     except Exception as e:
-                        st.error(f"Error en evaluación: {e}")
-                        st.exception(e)
+                        st.error(f"Error cargando instancia: {e}")
 
     # ==========================================
-    # TAB 4: LABORATORIO
-    # ==========================================
-    # ==========================================
-    # TAB 4: LABORATORIO
+    # TAB 4: ARQUITECTURA
     # ==========================================
     with tabs[3]:
-        st.markdown("### 🧪 Laboratorio de Fonemas")
+        st.markdown("### 📐 Arquitectura de la Red: TinyEars")
+        st.info("La arquitectura configurada aquí se aplica consistentemente a los tres idiomas al momento de entrenar.")
         
-        # 1. Seleccionar Modelo
-        all_ckpts = list_checkpoints("listener")
-        phoneme_ckpts = [c for c in all_ckpts if "phoneme" in c['filename'] or c.get('meta', {}).get('config', {}).get('type') == 'phoneme']
+        arch_config = config.get("architectures", {}).get("tiny_ears_phonemes", {})
         
-        if not phoneme_ckpts:
-            st.warning("Entrena un modelo primero.")
-        else:
-            opts = {c['filename']: c['path'] for c in phoneme_ckpts}
-            sel_model_name = st.selectbox("Modelo para Inferencia", list(opts.keys()), key="lab_model_sel")
-            
-            if st.button("Cargar Modelo", key="load_model_lab"):
-                ckpt_path = opts[sel_model_name]
-                with st.spinner("Cargando modelo..."):
-                    try:
-                        meta_path = Path(ckpt_path).with_suffix(".ckpt.meta.json")
-                        class_names = []
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta = json.load(f)
-                                class_names = meta.get('config', {}).get('vocab', [])
-                        
-                        if not class_names:
-                            class_names = get_default_words()
-                            
-                        model = PhonologicalPathwayLightning.load_from_checkpoint(
-                            ckpt_path,
-                            class_names=class_names
-                        )
-                        model.eval()
-                        st.session_state['ph_lab_model'] = model
-                        st.success(f"Modelo cargado: {sel_model_name}")
-                    except Exception as e:
-                        st.error(f"Error cargando modelo: {e}")
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("#### Parámetros Sistemáticos")
+            with st.form("arch_form_tiny_ears"):
+                h_dim = st.number_input("Dimensión Oculta (hidden_dim)", min_value=32, max_value=1024, value=arch_config.get("hidden_dim", 256), step=32)
+                n_conv = st.number_input("Capas Convolucionales", min_value=1, max_value=10, value=arch_config.get("num_conv_layers", 3))
+                n_transf = st.number_input("Capas Transformer", min_value=1, max_value=10, value=arch_config.get("num_transformer_layers", 2))
+                n_heads = st.number_input("Cabezas de Atención", min_value=1, max_value=16, value=arch_config.get("nhead", 4))
+                
+                if st.form_submit_button("💾 Guardar Configuración Arquitectónica", type="primary"):
+                    if "architectures" not in config:
+                        config["architectures"] = {}
+                    config["architectures"]["tiny_ears_phonemes"] = {
+                        "hidden_dim": h_dim,
+                        "num_conv_layers": n_conv,
+                        "num_transformer_layers": n_transf,
+                        "nhead": n_heads
+                    }
+                    save_master_dataset_config(config)
+                    st.success("Configuración global guardada para todos los idiomas.")
+                    st.rerun()
+                    
+        with col_c2:
+            st.markdown("#### Topología Base")
+            st.graphviz_chart(get_listener_diagram())
 
-            if 'ph_lab_model' in st.session_state:
-                model = st.session_state['ph_lab_model']
-                device = next(model.parameters()).device
-                
-                st.divider()
-                st.markdown("#### 🎤 Prueba Interactiva")
-                
-                input_method = st.radio("Método de Entrada", ["Muestra del Dataset", "Subir Archivo WAV"])
-                
-                waveform = None
-                sample_rate = 16000
-                label_text = "Desconocido"
-                
-                if input_method == "Muestra del Dataset":
-                    # Cargar dataset de validación (cacheado si es posible, aquí lo cargamos bajo demanda)
-                    # Usamos st.cache_resource para evitar recargar el dataset en cada interacción si fuera pesado,
-                    # pero build_audio_dataloaders es rápido con json.
-                    
-                    if 'val_dataset' not in st.session_state:
-                         _, val_ds, _, _ = build_audio_dataloaders(batch_size=1, target_language='es', use_phonemes=True, seed=42, num_workers=0)
-                         st.session_state['val_dataset'] = val_ds
-                    
-                    val_ds = st.session_state['val_dataset']
-                    
-                    # Selector de clase
-                    selected_class = st.selectbox("Selecciona un Fonema", model.class_names)
-                    
-                    # Filtrar muestras de esa clase
-                    class_samples = [s for s in val_ds.samples if s.word == selected_class]
-                    
-                    if not class_samples:
-                        st.warning(f"No hay muestras de validación para el fonema '{selected_class}'.")
-                    else:
-                        col1, col2 = st.columns([1, 2])
-                        with col1:
-                            if st.button("🎲 Cargar Muestra", type="primary"):
-                                import random
-                                sample = random.choice(class_samples)
-                                waveform = sample.waveform
-                                label_text = sample.word
-                                st.session_state['ph_lab_waveform'] = waveform
-                                st.session_state['ph_lab_label'] = label_text
-                        
-                        with col2:
-                            st.caption(f"Disponibles: {len(class_samples)} muestras")
-
-                    if 'ph_lab_waveform' in st.session_state:
-                        waveform = st.session_state['ph_lab_waveform']
-                        label_text = st.session_state['ph_lab_label']
-                        st.info(f"Muestra cargada: **{label_text}**")
-                        
-                else:
-                    uploaded_file = st.file_uploader("Sube un archivo WAV", type=["wav"])
-                    if uploaded_file:
-                        import torchaudio
-                        wf, sr = torchaudio.load(uploaded_file)
-                        if sr != 16000:
-                            wf = torchaudio.transforms.Resample(sr, 16000)(wf)
-                        if wf.shape[0] > 1:
-                            wf = wf.mean(dim=0, keepdim=True)
-                        waveform = wf
-                        st.audio(uploaded_file, format='audio/wav')
-
-                if waveform is not None:
-                    # Visualizar
-                    st.markdown("##### Espectrograma")
-                    import torchaudio.transforms as T
-                    spec_transform = T.MelSpectrogram(sample_rate=16000, n_mels=80)
-                    spec = (spec_transform(waveform) + 1e-9).log2()
-                    spec_np = spec.numpy()
-                    spec_norm = (spec_np - spec_np.min()) / (spec_np.max() - spec_np.min() + 1e-6)
-                    # Invertir eje Y para que frecuencias bajas estén abajo (estándar en espectrogramas)
-                    spec_norm = np.flipud(spec_norm)
-                    st.image(spec_norm, caption="Mel Spectrogram", use_container_width=True)
-                    
-                    if st.button("🧠 Analizar Fonema", type="primary"):
-                        try:
-                            with torch.no_grad():
-                                wf_in = waveform.to(device)
-                                
-                                logits = model([wf_in])
-                                probs = torch.softmax(logits, dim=1)
-                                
-                                top_probs, top_idxs = torch.topk(probs, 5, dim=1)
-                                
-                                st.markdown("### 🎯 Predicciones")
-                                results = []
-                                for i in range(5):
-                                    idx = top_idxs[0, i].item()
-                                    prob = top_probs[0, i].item()
-                                    cls_name = model.class_names[idx] if idx < len(model.class_names) else f"Unknown({idx})"
-                                    results.append({"Fonema": cls_name, "Confianza": f"{prob:.2%}"})
-                                    
-                                st.table(results)
-                                
-                                top_pred = results[0]["Fonema"]
-                                if label_text != "Desconocido":
-                                    if top_pred == label_text:
-                                        st.balloons()
-                                        st.success(f"¡Correcto! Predicción: {top_pred}")
-                                    else:
-                                        st.error(f"Incorrecto. Predicción: {top_pred} vs Real: {label_text}")
-                                else:
-                                    st.info(f"Predicción Principal: **{top_pred}**")
-                                    
-                                # Gráfica de barras
-                                chart_data = pd.DataFrame({
-                                    "Fonema": [r["Fonema"] for r in results],
-                                    "Probabilidad": top_probs[0].cpu().numpy()
-                                })
-                                st.bar_chart(chart_data.set_index("Fonema"))
-                                
-                        except Exception as e:
-                            st.error(f"Error en análisis: {e}")
+        with st.expander("💻 Ver Código del Modelo Base"):
+            st.code(get_function_source(TinyEars), language="python")
 
 if __name__ == "__main__":
     main()

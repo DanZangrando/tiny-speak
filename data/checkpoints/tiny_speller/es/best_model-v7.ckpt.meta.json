@@ -1,0 +1,523 @@
+{
+  "timestamp": 1776704425.4307806,
+  "date": "2026-04-20 14:00:25",
+  "config": {
+    "epochs": 50,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "dtw": 0.0,
+      "perceptual": 0.5
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/es/best_model.ckpt",
+    "language": "es",
+    "classes": [
+      "abeja",
+      "araña",
+      "ardilla",
+      "ave",
+      "ballena",
+      "caballo",
+      "cabra",
+      "cangrejo",
+      "cerdo",
+      "ciervo",
+      "conejo",
+      "delfín",
+      "elefante",
+      "estrella",
+      "ganso",
+      "gato",
+      "hormiga",
+      "jirafa",
+      "león",
+      "lobo",
+      "mariposa",
+      "mono",
+      "oso",
+      "oveja",
+      "pato",
+      "perro",
+      "pez",
+      "pingüino",
+      "pollo",
+      "pulpo",
+      "rana",
+      "ratón",
+      "serpiente",
+      "tiburón",
+      "tigre",
+      "tortuga",
+      "vaca",
+      "zebra",
+      "zorro"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 1.0,
+    "train_g2p_perceptual": 0.0017126465681940317,
+    "train_loss": 0.0008563232840970159,
+    "val_phoneme_acc": 1.0,
+    "val_g2p_perceptual": 0.001516653341241181,
+    "val_loss": 0.0007583266706205904,
+    "epoch": 49
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.7674418687820435,
+      "train_g2p_perceptual": 1.1453779935836792,
+      "train_loss": 0.5726889967918396,
+      "val_phoneme_acc": 0.8202722668647766,
+      "val_g2p_perceptual": 1.0148489475250244,
+      "val_loss": 0.5074244737625122,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.9743589758872986,
+      "train_g2p_perceptual": 0.386740505695343,
+      "train_loss": 0.1933702528476715,
+      "val_phoneme_acc": 0.9405868053436279,
+      "val_g2p_perceptual": 0.4231548607349396,
+      "val_loss": 0.2115774303674698,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.9756097197532654,
+      "train_g2p_perceptual": 0.20889033377170563,
+      "train_loss": 0.10444516688585281,
+      "val_phoneme_acc": 0.9718142151832581,
+      "val_g2p_perceptual": 0.24517537653446198,
+      "val_loss": 0.12258768826723099,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0963861495256424,
+      "train_loss": 0.0481930747628212,
+      "val_phoneme_acc": 0.9882299900054932,
+      "val_g2p_perceptual": 0.14618264138698578,
+      "val_loss": 0.07309132069349289,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 0.9761905074119568,
+      "train_g2p_perceptual": 0.10766532272100449,
+      "train_loss": 0.05383266136050224,
+      "val_phoneme_acc": 0.9946454763412476,
+      "val_g2p_perceptual": 0.09905882924795151,
+      "val_loss": 0.049529414623975754,
+      "epoch": 4
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.055141981691122055,
+      "train_loss": 0.027570990845561028,
+      "val_phoneme_acc": 0.995631217956543,
+      "val_g2p_perceptual": 0.07502329349517822,
+      "val_loss": 0.03751164674758911,
+      "epoch": 5
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.04216013848781586,
+      "train_loss": 0.02108006924390793,
+      "val_phoneme_acc": 0.997550368309021,
+      "val_g2p_perceptual": 0.055323801934719086,
+      "val_loss": 0.027661900967359543,
+      "epoch": 6
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.04194994270801544,
+      "train_loss": 0.02097497135400772,
+      "val_phoneme_acc": 0.997550368309021,
+      "val_g2p_perceptual": 0.04741458594799042,
+      "val_loss": 0.02370729297399521,
+      "epoch": 7
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.024392809718847275,
+      "train_loss": 0.012196404859423637,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.037121228873729706,
+      "val_loss": 0.018560614436864853,
+      "epoch": 8
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.030985811725258827,
+      "train_loss": 0.015492905862629414,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.028912253677845,
+      "val_loss": 0.0144561268389225,
+      "epoch": 9
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.025974715128540993,
+      "train_loss": 0.012987357564270496,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.02568412758409977,
+      "val_loss": 0.012842063792049885,
+      "epoch": 10
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.017050856724381447,
+      "train_loss": 0.008525428362190723,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.02018718421459198,
+      "val_loss": 0.01009359210729599,
+      "epoch": 11
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.021252017468214035,
+      "train_loss": 0.010626008734107018,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.018659915775060654,
+      "val_loss": 0.009329957887530327,
+      "epoch": 12
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.022222978994250298,
+      "train_loss": 0.011111489497125149,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.015879083424806595,
+      "val_loss": 0.007939541712403297,
+      "epoch": 13
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.012682104483246803,
+      "train_loss": 0.006341052241623402,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.014163639396429062,
+      "val_loss": 0.007081819698214531,
+      "epoch": 14
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.01046220026910305,
+      "train_loss": 0.005231100134551525,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.012066837400197983,
+      "val_loss": 0.006033418700098991,
+      "epoch": 15
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.009344910271465778,
+      "train_loss": 0.004672455135732889,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.011244810186326504,
+      "val_loss": 0.005622405093163252,
+      "epoch": 16
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.007967780344188213,
+      "train_loss": 0.003983890172094107,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.010616096667945385,
+      "val_loss": 0.0053080483339726925,
+      "epoch": 17
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.006659379694610834,
+      "train_loss": 0.003329689847305417,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.009181875735521317,
+      "val_loss": 0.004590937867760658,
+      "epoch": 18
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.008071491494774818,
+      "train_loss": 0.004035745747387409,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.009203294292092323,
+      "val_loss": 0.004601647146046162,
+      "epoch": 19
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.01076341699808836,
+      "train_loss": 0.00538170849904418,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.007898706942796707,
+      "val_loss": 0.003949353471398354,
+      "epoch": 20
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.010107282549142838,
+      "train_loss": 0.005053641274571419,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0071539799682796,
+      "val_loss": 0.0035769899841398,
+      "epoch": 21
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.004748259671032429,
+      "train_loss": 0.0023741298355162144,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.006504642311483622,
+      "val_loss": 0.003252321155741811,
+      "epoch": 22
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.005086362361907959,
+      "train_loss": 0.0025431811809539795,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.005818338133394718,
+      "val_loss": 0.002909169066697359,
+      "epoch": 23
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.008171622641384602,
+      "train_loss": 0.004085811320692301,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.005692955572158098,
+      "val_loss": 0.002846477786079049,
+      "epoch": 24
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.004871433600783348,
+      "train_loss": 0.002435716800391674,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.005485743749886751,
+      "val_loss": 0.0027428718749433756,
+      "epoch": 25
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.004160565324127674,
+      "train_loss": 0.002080282662063837,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.00553714158013463,
+      "val_loss": 0.002768570790067315,
+      "epoch": 26
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0037052929401397705,
+      "train_loss": 0.0018526464700698853,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.004500248935073614,
+      "val_loss": 0.002250124467536807,
+      "epoch": 27
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.004145679995417595,
+      "train_loss": 0.0020728399977087975,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.004330188035964966,
+      "val_loss": 0.002165094017982483,
+      "epoch": 28
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.003648904152214527,
+      "train_loss": 0.0018244520761072636,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.004118548706173897,
+      "val_loss": 0.0020592743530869484,
+      "epoch": 29
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.0029134207870811224,
+      "train_loss": 0.0014567103935405612,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0037629506550729275,
+      "val_loss": 0.0018814753275364637,
+      "epoch": 30
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0028454021085053682,
+      "train_loss": 0.0014227010542526841,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0035556231159716845,
+      "val_loss": 0.0017778115579858422,
+      "epoch": 31
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0026656438130885363,
+      "train_loss": 0.0013328219065442681,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0033749123103916645,
+      "val_loss": 0.0016874561551958323,
+      "epoch": 32
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0023289809469133615,
+      "train_loss": 0.0011644904734566808,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.003258043434470892,
+      "val_loss": 0.001629021717235446,
+      "epoch": 33
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.002736371476203203,
+      "train_loss": 0.0013681857381016016,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.00313188717700541,
+      "val_loss": 0.001565943588502705,
+      "epoch": 34
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.0026115092914551497,
+      "train_loss": 0.0013057546457275748,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0029654332902282476,
+      "val_loss": 0.0014827166451141238,
+      "epoch": 35
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.003589146537706256,
+      "train_loss": 0.001794573268853128,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0028261824045330286,
+      "val_loss": 0.0014130912022665143,
+      "epoch": 36
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0028365422040224075,
+      "train_loss": 0.0014182711020112038,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.002660101978108287,
+      "val_loss": 0.0013300509890541434,
+      "epoch": 37
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0022180748637765646,
+      "train_loss": 0.0011090374318882823,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0025381348095834255,
+      "val_loss": 0.0012690674047917128,
+      "epoch": 38
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0026062929537147284,
+      "train_loss": 0.0013031464768573642,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0025424615014344454,
+      "val_loss": 0.0012712307507172227,
+      "epoch": 39
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.003291762201115489,
+      "train_loss": 0.0016458811005577445,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0023140283301472664,
+      "val_loss": 0.0011570141650736332,
+      "epoch": 40
+    },
+    {
+      "train_phoneme_acc": 0.9999999403953552,
+      "train_g2p_perceptual": 0.001806024112738669,
+      "train_loss": 0.0009030120563693345,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.00217442843131721,
+      "val_loss": 0.001087214215658605,
+      "epoch": 41
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0019701707642525434,
+      "train_loss": 0.0009850853821262717,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0021175886504352093,
+      "val_loss": 0.0010587943252176046,
+      "epoch": 42
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0018041122239083052,
+      "train_loss": 0.0009020561119541526,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.001937872963026166,
+      "val_loss": 0.000968936481513083,
+      "epoch": 43
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0016533819725736976,
+      "train_loss": 0.0008266909862868488,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0019450264517217875,
+      "val_loss": 0.0009725132258608937,
+      "epoch": 44
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0029438729397952557,
+      "train_loss": 0.0014719364698976278,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.001855928567238152,
+      "val_loss": 0.000927964283619076,
+      "epoch": 45
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0014017369830980897,
+      "train_loss": 0.0007008684915490448,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0017129118787124753,
+      "val_loss": 0.0008564559393562376,
+      "epoch": 46
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0017864856636151671,
+      "train_loss": 0.0008932428318075836,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.001654383260756731,
+      "val_loss": 0.0008271916303783655,
+      "epoch": 47
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0015923576429486275,
+      "train_loss": 0.0007961788214743137,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.0015852386131882668,
+      "val_loss": 0.0007926193065941334,
+      "epoch": 48
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.0017126465681940317,
+      "train_loss": 0.0008563232840970159,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.001516653341241181,
+      "val_loss": 0.0007583266706205904,
+      "epoch": 49
+    }
+  ]
+}

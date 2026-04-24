@@ -1,0 +1,118 @@
+{
+  "timestamp": 1776711106.1569777,
+  "date": "2026-04-20 15:51:46",
+  "config": {
+    "epochs": 5,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "dtw": 0.0,
+      "perceptual": 0.5
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/en/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/en/best_model.ckpt",
+    "language": "en",
+    "classes": [
+      "ant",
+      "bear",
+      "bee",
+      "bird",
+      "butterfly",
+      "cat",
+      "chicken",
+      "cow",
+      "crab",
+      "deer",
+      "dog",
+      "dolphin",
+      "duck",
+      "elephant",
+      "fish",
+      "fox",
+      "frog",
+      "giraffe",
+      "goat",
+      "goose",
+      "horse",
+      "lion",
+      "monkey",
+      "mouse",
+      "octopus",
+      "penguin",
+      "pig",
+      "rabbit",
+      "shark",
+      "sheep",
+      "snake",
+      "spider",
+      "squirrel",
+      "starfish",
+      "tiger",
+      "turtle",
+      "whale",
+      "wolf",
+      "zebra"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/en/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 1.0,
+    "train_g2p_perceptual": 0.10863158106803894,
+    "train_loss": 0.05431579053401947,
+    "val_phoneme_acc": 0.9962986707687378,
+    "val_g2p_perceptual": 0.1234479770064354,
+    "val_loss": 0.0617239885032177,
+    "epoch": 4
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.8947368264198303,
+      "train_g2p_perceptual": 1.2396656274795532,
+      "train_loss": 0.6198328137397766,
+      "val_phoneme_acc": 0.8508434891700745,
+      "val_g2p_perceptual": 1.2669541835784912,
+      "val_loss": 0.6334770917892456,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.9722222089767456,
+      "train_g2p_perceptual": 0.5145692229270935,
+      "train_loss": 0.25728461146354675,
+      "val_phoneme_acc": 0.9530752897262573,
+      "val_g2p_perceptual": 0.548372209072113,
+      "val_loss": 0.2741861045360565,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.9705882668495178,
+      "train_g2p_perceptual": 0.30380991101264954,
+      "train_loss": 0.15190495550632477,
+      "val_phoneme_acc": 0.9731793403625488,
+      "val_g2p_perceptual": 0.3013143539428711,
+      "val_loss": 0.15065717697143555,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 0.97826087474823,
+      "train_g2p_perceptual": 0.1964629888534546,
+      "train_loss": 0.0982314944267273,
+      "val_phoneme_acc": 0.9903331398963928,
+      "val_g2p_perceptual": 0.17488086223602295,
+      "val_loss": 0.08744043111801147,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.10863158106803894,
+      "train_loss": 0.05431579053401947,
+      "val_phoneme_acc": 0.9962986707687378,
+      "val_g2p_perceptual": 0.1234479770064354,
+      "val_loss": 0.0617239885032177,
+      "epoch": 4
+    }
+  ]
+}

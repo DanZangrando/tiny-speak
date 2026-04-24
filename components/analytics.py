@@ -22,7 +22,7 @@ def plot_learning_curves(history_df):
     if loss_cols:
         fig_loss = px.line(history_df, y=loss_cols, markers=True, title="Evolución de la Pérdida")
         fig_loss.update_layout(xaxis_title="Época", yaxis_title="Loss", hovermode="x unified")
-        st.plotly_chart(fig_loss, use_container_width=True)
+        st.plotly_chart(fig_loss, width="stretch")
 
     # Accuracy Chart
     acc_cols = [c for c in history_df.columns if 'top1' in c or 'acc' in c]
@@ -30,29 +30,86 @@ def plot_learning_curves(history_df):
         st.subheader("📈 Curvas de Precisión (Accuracy)")
         fig_acc = px.line(history_df, y=acc_cols, markers=True, title="Evolución de la Precisión")
         fig_acc.update_layout(xaxis_title="Época", yaxis_title="Accuracy (%)", hovermode="x unified")
-        st.plotly_chart(fig_acc, use_container_width=True)
+        st.plotly_chart(fig_acc, width="stretch")
+
+def plot_training_history(history_list):
+    """
+    Toma un historico tipo lista generada guardada en .meta.json y genera la gráfica marcando el 'best checkpoint'.
+    """
+    if not history_list:
+        st.warning("No hay historial disponible correspondiente al modelo guardado.")
+        return
+        
+    df = pd.DataFrame(history_list)
+    if 'epoch' not in df.columns:
+        df['epoch'] = df.index
+        
+    best_epoch = None
+    if 'val_loss' in df.columns:
+        best_epoch = df['val_loss'].idxmin()
+    
+    # Loss plot
+    loss_cols = [c for c in df.columns if 'loss' in c]
+    if loss_cols:
+        fig_loss = px.line(df, x='epoch', y=loss_cols, title="Curva de Historial (Loss)")
+        if best_epoch is not None:
+            fig_loss.add_vline(x=df.loc[best_epoch, 'epoch'], line_dash="dash", line_color="red", annotation_text="Best Checkpoint Mínimo")
+        st.plotly_chart(fig_loss, width="stretch")
+
+    # Accuracy / Metrics plot
+    acc_cols = [c for c in df.columns if 'acc' in c or 'top1' in c or 'dtw' in c or 'perceptual' in c]
+    if acc_cols:
+        fig_acc = px.line(df, x='epoch', y=acc_cols, title="Curva de Historial (Métricas)")
+        if best_epoch is not None:
+            fig_acc.add_vline(x=df.loc[best_epoch, 'epoch'], line_dash="dash", line_color="red", annotation_text="Best Checkpoint Mínimo")
+        st.plotly_chart(fig_acc, width="stretch")
 
 def plot_confusion_matrix(y_true, y_pred, classes, title="Matriz de Confusión"):
     """
     Genera y muestra una matriz de confusión visualmente atractiva.
+    Maneja tanto índices enteros como etiquetas de texto.
     """
-    # Asegurar que la matriz se calcule para TODAS las clases en el orden correcto (0..N-1)
-    labels = list(range(len(classes)))
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
-    
-    # Normalizar para el color (opcional, pero útil)
-    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    
-    fig, ax = plt.subplots(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=classes, yticklabels=classes, ax=ax)
-    plt.ylabel('Verdadero')
-    plt.xlabel('Predicho')
-    plt.title(title)
-    plt.xticks(rotation=45, ha='right')
-    
-    st.pyplot(fig)
-    
-    return cm
+    if not y_true or len(y_true) == 0:
+        st.warning("No hay suficientes datos de predicción para generar la matriz de confusión.")
+        return None
+
+    try:
+        # Detectar tipo de datos y ajustar labels
+        if isinstance(y_true[0], str):
+            # Si son strings, los labels son los nombres de las clases
+            labels = classes
+            ticks = classes
+        else:
+            # Si son enteros, los labels son los índices
+            labels = list(range(len(classes)))
+            ticks = classes
+            
+        # Asegurar que al menos un label esté presente en y_true para evitar error de sklearn
+        valid_labels = [L for L in labels if L in y_true]
+        if not valid_labels:
+            st.warning("⚠️ Ninguna de las clases esperadas se encontró en las predicciones de validación todavía.")
+            return None
+
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        
+        # Normalizar para visualización (evitar division por cero)
+        with np.errstate(all='ignore'):
+            cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+            cm_norm = np.nan_to_num(cm_norm)
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=ticks, yticklabels=ticks, ax=ax)
+        plt.ylabel('Verdadero')
+        plt.xlabel('Predicho')
+        plt.title(title)
+        plt.xticks(rotation=45, ha='right')
+        
+        st.pyplot(fig)
+        return cm
+        
+    except Exception as e:
+        st.error(f"Error generando matriz de confusión: {e}")
+        return None
 
 def plot_probability_matrix(y_true, y_probs, classes, title="Mapa de Calor de Probabilidades"):
     """
@@ -150,4 +207,44 @@ def plot_latent_space_pca(embeddings, labels, classes, title="Espacio Latente (P
         opacity=0.7
     )
     fig.update_layout(margin=dict(l=0, r=0, b=0, t=40))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
+
+def plot_dtw_alignment(pred_audio, target_audio, title="Sincronía Temporal (DTW Alignment)"):
+    """
+    Visualiza la alineación temporal entre las señales predichas y reales.
+    """
+    import matplotlib.pyplot as plt
+    
+    # Convertir tensores a numpy si es necesario
+    if hasattr(pred_audio, "cpu"):
+        pred_audio = pred_audio.detach().cpu().numpy()
+    if hasattr(target_audio, "cpu"):
+        target_audio = target_audio.detach().cpu().numpy()
+        
+    # Si son 2D (ej. spectrograms o embeddings promediados), aplanar o promediar
+    if pred_audio.ndim > 1:
+        pred_audio = pred_audio.mean(axis=-1)
+    if target_audio.ndim > 1:
+        target_audio = target_audio.mean(axis=-1)
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    
+    # Normalizar para visualización comparativa
+    def norm(x):
+        return (x - x.min()) / (x.max() - x.min() + 1e-8)
+    
+    p = norm(pred_audio)
+    t = norm(target_audio)
+    
+    ax.plot(t, label="Real (Target)", color="#6B66FF", alpha=0.6, linewidth=2)
+    ax.plot(p, label="Predicho (Sintetizado)", color="#FF66B2", alpha=0.9, linewidth=1.5)
+    
+    ax.set_title(title, fontsize=12, fontweight='bold', color='white')
+    ax.legend(facecolor='#1e1e1e', edgecolor='none', labelcolor='white')
+    ax.set_facecolor('#0e1117')
+    fig.patch.set_facecolor('#0e1117')
+    ax.tick_params(colors='white')
+    ax.grid(alpha=0.1, color='white')
+    
+    plt.tight_layout()
+    return fig

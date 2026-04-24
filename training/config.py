@@ -19,10 +19,10 @@ def load_master_dataset_config(config_path: Path | None = None) -> Dict[str, Any
     ----------
     config_path:
         Optional override path for the configuration file. Defaults to
-        ``<repo_root>/master_dataset_config.json``.
+        ``<repo_root>/data/master_dataset_config.json``.
     """
     if config_path is None:
-        config_path = get_repo_root() / "master_dataset_config.json"
+        config_path = get_repo_root() / "data" / "master_dataset_config.json"
 
     if not config_path.exists():
         raise FileNotFoundError(
@@ -43,10 +43,10 @@ def save_master_dataset_config(config: Dict[str, Any], config_path: Path | None 
         The configuration dictionary to save.
     config_path:
         Optional override path for the configuration file. Defaults to
-        ``<repo_root>/master_dataset_config.json``.
+        ``<repo_root>/data/master_dataset_config.json``.
     """
     if config_path is None:
-        config_path = get_repo_root() / "master_dataset_config.json"
+        config_path = get_repo_root() / "data" / "master_dataset_config.json"
 
     with config_path.open("w", encoding="utf-8") as fp:
         json.dump(config, fp, indent=4, ensure_ascii=False)

@@ -1,0 +1,163 @@
+{
+  "timestamp": 1776704530.9481702,
+  "date": "2026-04-20 14:02:10",
+  "config": {
+    "epochs": 10,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "dtw": 0.0,
+      "perceptual": 0.5
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/es/best_model.ckpt",
+    "language": "es",
+    "classes": [
+      "abeja",
+      "araña",
+      "ardilla",
+      "ave",
+      "ballena",
+      "caballo",
+      "cabra",
+      "cangrejo",
+      "cerdo",
+      "ciervo",
+      "conejo",
+      "delfín",
+      "elefante",
+      "estrella",
+      "ganso",
+      "gato",
+      "hormiga",
+      "jirafa",
+      "león",
+      "lobo",
+      "mariposa",
+      "mono",
+      "oso",
+      "oveja",
+      "pato",
+      "perro",
+      "pez",
+      "pingüino",
+      "pollo",
+      "pulpo",
+      "rana",
+      "ratón",
+      "serpiente",
+      "tiburón",
+      "tigre",
+      "tortuga",
+      "vaca",
+      "zebra",
+      "zorro"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/es/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 1.0,
+    "train_g2p_perceptual": 0.02408752590417862,
+    "train_loss": 0.01204376295208931,
+    "val_phoneme_acc": 1.0,
+    "val_g2p_perceptual": 0.031789470463991165,
+    "val_loss": 0.015894735231995583,
+    "epoch": 9
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.8409091234207153,
+      "train_g2p_perceptual": 0.8776741027832031,
+      "train_loss": 0.43883705139160156,
+      "val_phoneme_acc": 0.8524605631828308,
+      "val_g2p_perceptual": 0.9659491181373596,
+      "val_loss": 0.4829745590686798,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.9130434989929199,
+      "train_g2p_perceptual": 0.5331178903579712,
+      "train_loss": 0.2665589451789856,
+      "val_phoneme_acc": 0.9519014954566956,
+      "val_g2p_perceptual": 0.42900893092155457,
+      "val_loss": 0.21450446546077728,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.9777777791023254,
+      "train_g2p_perceptual": 0.29209065437316895,
+      "train_loss": 0.14604532718658447,
+      "val_phoneme_acc": 0.9827227592468262,
+      "val_g2p_perceptual": 0.23757903277873993,
+      "val_loss": 0.11878951638936996,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.1481826901435852,
+      "train_loss": 0.0740913450717926,
+      "val_phoneme_acc": 0.9842515587806702,
+      "val_g2p_perceptual": 0.1617218255996704,
+      "val_loss": 0.0808609127998352,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 0.9750000238418579,
+      "train_g2p_perceptual": 0.12861254811286926,
+      "train_loss": 0.06430627405643463,
+      "val_phoneme_acc": 0.9882299900054932,
+      "val_g2p_perceptual": 0.11001931130886078,
+      "val_loss": 0.05500965565443039,
+      "epoch": 4
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.07649171352386475,
+      "train_loss": 0.03824585676193237,
+      "val_phoneme_acc": 0.996161699295044,
+      "val_g2p_perceptual": 0.07850262522697449,
+      "val_loss": 0.039251312613487244,
+      "epoch": 5
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.04620083421468735,
+      "train_loss": 0.023100417107343674,
+      "val_phoneme_acc": 0.998080849647522,
+      "val_g2p_perceptual": 0.06267687678337097,
+      "val_loss": 0.031338438391685486,
+      "epoch": 6
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.030583994463086128,
+      "train_loss": 0.015291997231543064,
+      "val_phoneme_acc": 0.998080849647522,
+      "val_g2p_perceptual": 0.049916550517082214,
+      "val_loss": 0.024958275258541107,
+      "epoch": 7
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.02421732246875763,
+      "train_loss": 0.012108661234378815,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.036247801035642624,
+      "val_loss": 0.018123900517821312,
+      "epoch": 8
+    },
+    {
+      "train_phoneme_acc": 1.0,
+      "train_g2p_perceptual": 0.02408752590417862,
+      "train_loss": 0.01204376295208931,
+      "val_phoneme_acc": 1.0,
+      "val_g2p_perceptual": 0.031789470463991165,
+      "val_loss": 0.015894735231995583,
+      "epoch": 9
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""PyTorch Lightning module for TinyRecognizer training."""
+"""PyTorch Lightning module for TinyEyes training."""
 
 from __future__ import annotations
 
@@ -8,29 +8,30 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from models import VisualPathway
+from models.tiny_eyes import TinyEyes
 
 
-class VisualPathwayLightning(pl.LightningModule):
-    """LightningModule that encapsulates VisualPathway training & evaluation."""
+class TinyEyesLightning(pl.LightningModule):
+    """LightningModule that encapsulates TinyEyes training & evaluation."""
 
     def __init__(
         self,
-        num_classes: int,
+        class_names: Sequence[str],
         *,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
         hidden_dim: int = 512,
         topk: Iterable[int] | None = (1, 3, 5),
-        # Argumentos legacy ignorados
-        freeze_backbone: bool = False,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=("class_names",))
 
+        self.class_names = list(class_names)
+        self.class_to_idx = {name: i for i, name in enumerate(self.class_names)}
+        
         # Instanciar nuevo modelo custom
-        self.model = VisualPathway(
-            num_classes=num_classes, 
+        self.model = TinyEyes(
+            num_classes=len(self.class_names), 
             hidden_dim=hidden_dim
         )
         
@@ -43,7 +44,7 @@ class VisualPathwayLightning(pl.LightningModule):
         self._test_buffer: List[Dict] = []
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        # VisualPathway retorna (logits, embeddings)
+        # TinyEyes retorna (logits, embeddings)
         logits, _ = self.model(images)
         return logits
 
@@ -79,6 +80,9 @@ class VisualPathwayLightning(pl.LightningModule):
                 on_step=False,
                 on_epoch=True,
             )
+            # Alias genérico para la interfaz
+            if k == 1:
+                self.log(f"{stage}_acc", acc, on_step=False, on_epoch=True, sync_dist=True)
 
         if stage in {"val", "test"}:
             buffer = self._validation_buffer if stage == "val" else self._test_buffer

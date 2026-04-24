@@ -1,0 +1,252 @@
+{
+  "timestamp": 1776714622.1254923,
+  "date": "2026-04-20 16:50:22",
+  "config": {
+    "epochs": 20,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weights": {
+      "structural_mse": 0.5
+    },
+    "listener_ckpt": "data/checkpoints/tiny_ears_phonemes/en/best_model.ckpt",
+    "recognizer_ckpt": "data/checkpoints/tiny_eyes/en/best_model.ckpt",
+    "language": "en",
+    "classes": [
+      "ant",
+      "bear",
+      "bee",
+      "bird",
+      "butterfly",
+      "cat",
+      "chicken",
+      "cow",
+      "crab",
+      "deer",
+      "dog",
+      "dolphin",
+      "duck",
+      "elephant",
+      "fish",
+      "fox",
+      "frog",
+      "giraffe",
+      "goat",
+      "goose",
+      "horse",
+      "lion",
+      "monkey",
+      "mouse",
+      "octopus",
+      "penguin",
+      "pig",
+      "rabbit",
+      "shark",
+      "sheep",
+      "snake",
+      "spider",
+      "squirrel",
+      "starfish",
+      "tiger",
+      "turtle",
+      "whale",
+      "wolf",
+      "zebra"
+    ],
+    "type": "reader",
+    "use_two_stage": true,
+    "phoneme_listener_ckpt": "data/checkpoints/tiny_ears_phonemes/en/best_model.ckpt",
+    "training_phase": "g2p",
+    "pretrained_speller_ckpt": null
+  },
+  "metrics": {
+    "train_phoneme_acc": 0.09302325546741486,
+    "train_g2p_structural_mse": 0.0005779262282885611,
+    "train_loss": 0.0005779262282885611,
+    "val_phoneme_acc": 0.03750883415341377,
+    "val_g2p_structural_mse": 0.0005776641191914678,
+    "val_loss": 0.0005776641191914678,
+    "epoch": 19
+  },
+  "history": [
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.11693612486124039,
+      "train_loss": 0.11693612486124039,
+      "val_phoneme_acc": 0.04582566022872925,
+      "val_g2p_structural_mse": 0.10594486445188522,
+      "val_loss": 0.10594486445188522,
+      "epoch": 0
+    },
+    {
+      "train_phoneme_acc": 0.027027027681469917,
+      "train_g2p_structural_mse": 0.008877793326973915,
+      "train_loss": 0.008877793326973915,
+      "val_phoneme_acc": 0.03701262176036835,
+      "val_g2p_structural_mse": 0.00881559681147337,
+      "val_loss": 0.00881559681147337,
+      "epoch": 1
+    },
+    {
+      "train_phoneme_acc": 0.0810810849070549,
+      "train_g2p_structural_mse": 0.003891696920618415,
+      "train_loss": 0.003891696920618415,
+      "val_phoneme_acc": 0.0357571579515934,
+      "val_g2p_structural_mse": 0.004144301638007164,
+      "val_loss": 0.004144301638007164,
+      "epoch": 2
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.0029823342338204384,
+      "train_loss": 0.0029823342338204384,
+      "val_phoneme_acc": 0.029684467241168022,
+      "val_g2p_structural_mse": 0.0029581559356302023,
+      "val_loss": 0.0029581559356302023,
+      "epoch": 3
+    },
+    {
+      "train_phoneme_acc": 0.05128205195069313,
+      "train_g2p_structural_mse": 0.002193897031247616,
+      "train_loss": 0.002193897031247616,
+      "val_phoneme_acc": 0.04035858437418938,
+      "val_g2p_structural_mse": 0.002337892772629857,
+      "val_loss": 0.002337892772629857,
+      "epoch": 4
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.001868968945927918,
+      "train_loss": 0.001868968945927918,
+      "val_phoneme_acc": 0.029955090954899788,
+      "val_g2p_structural_mse": 0.0018827690510079265,
+      "val_loss": 0.0018827690510079265,
+      "epoch": 5
+    },
+    {
+      "train_phoneme_acc": 0.10000000149011612,
+      "train_g2p_structural_mse": 0.001706311828456819,
+      "train_loss": 0.001706311828456819,
+      "val_phoneme_acc": 0.029955090954899788,
+      "val_g2p_structural_mse": 0.0016193659976124763,
+      "val_loss": 0.0016193659976124763,
+      "epoch": 6
+    },
+    {
+      "train_phoneme_acc": 0.04651162773370743,
+      "train_g2p_structural_mse": 0.0014198962599039078,
+      "train_loss": 0.0014198962599039078,
+      "val_phoneme_acc": 0.026652663946151733,
+      "val_g2p_structural_mse": 0.0013700801646336913,
+      "val_loss": 0.0013700801646336913,
+      "epoch": 7
+    },
+    {
+      "train_phoneme_acc": 0.11999999731779099,
+      "train_g2p_structural_mse": 0.0011288280365988612,
+      "train_loss": 0.0011288280365988612,
+      "val_phoneme_acc": 0.03420640900731087,
+      "val_g2p_structural_mse": 0.0012257638154551387,
+      "val_loss": 0.0012257638154551387,
+      "epoch": 8
+    },
+    {
+      "train_phoneme_acc": 0.02380952425301075,
+      "train_g2p_structural_mse": 0.001110557233914733,
+      "train_loss": 0.001110557233914733,
+      "val_phoneme_acc": 0.0357571579515934,
+      "val_g2p_structural_mse": 0.0010919426567852497,
+      "val_loss": 0.0010919426567852497,
+      "epoch": 9
+    },
+    {
+      "train_phoneme_acc": 0.024390242993831635,
+      "train_g2p_structural_mse": 0.0009379570838063955,
+      "train_loss": 0.0009379570838063955,
+      "val_phoneme_acc": 0.03375373035669327,
+      "val_g2p_structural_mse": 0.0010091309668496251,
+      "val_loss": 0.0010091309668496251,
+      "epoch": 10
+    },
+    {
+      "train_phoneme_acc": 0.02380952425301075,
+      "train_g2p_structural_mse": 0.0008967926842160523,
+      "train_loss": 0.0008967926842160523,
+      "val_phoneme_acc": 0.03975965455174446,
+      "val_g2p_structural_mse": 0.0009220567881129682,
+      "val_loss": 0.0009220567881129682,
+      "epoch": 11
+    },
+    {
+      "train_phoneme_acc": 0.03030303120613098,
+      "train_g2p_structural_mse": 0.000836368475575,
+      "train_loss": 0.000836368475575,
+      "val_phoneme_acc": 0.026425575837492943,
+      "val_g2p_structural_mse": 0.0008393306052312255,
+      "val_loss": 0.0008393306052312255,
+      "epoch": 12
+    },
+    {
+      "train_phoneme_acc": 0.0625,
+      "train_g2p_structural_mse": 0.0007946155383251607,
+      "train_loss": 0.0007946155383251607,
+      "val_phoneme_acc": 0.0357571579515934,
+      "val_g2p_structural_mse": 0.0007868359098210931,
+      "val_loss": 0.0007868359098210931,
+      "epoch": 13
+    },
+    {
+      "train_phoneme_acc": 0.06818182021379471,
+      "train_g2p_structural_mse": 0.0007894653826951981,
+      "train_loss": 0.0007894653826951981,
+      "val_phoneme_acc": 0.038583677262067795,
+      "val_g2p_structural_mse": 0.000742004718631506,
+      "val_loss": 0.000742004718631506,
+      "epoch": 14
+    },
+    {
+      "train_phoneme_acc": 0.025641025975346565,
+      "train_g2p_structural_mse": 0.0006872101221233606,
+      "train_loss": 0.0006872101221233606,
+      "val_phoneme_acc": 0.03468231484293938,
+      "val_g2p_structural_mse": 0.0007104338146746159,
+      "val_loss": 0.0007104338146746159,
+      "epoch": 15
+    },
+    {
+      "train_phoneme_acc": 0.024390242993831635,
+      "train_g2p_structural_mse": 0.0006851332727819681,
+      "train_loss": 0.0006851332727819681,
+      "val_phoneme_acc": 0.03930697590112686,
+      "val_g2p_structural_mse": 0.0006588137475773692,
+      "val_loss": 0.0006588137475773692,
+      "epoch": 16
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.000695489754434675,
+      "train_loss": 0.000695489754434675,
+      "val_phoneme_acc": 0.03420640900731087,
+      "val_g2p_structural_mse": 0.0006366433226503432,
+      "val_loss": 0.0006366433226503432,
+      "epoch": 17
+    },
+    {
+      "train_phoneme_acc": 0.0,
+      "train_g2p_structural_mse": 0.0005967423785477877,
+      "train_loss": 0.0005967423785477877,
+      "val_phoneme_acc": 0.04035858437418938,
+      "val_g2p_structural_mse": 0.0006099441088736057,
+      "val_loss": 0.0006099441088736057,
+      "epoch": 18
+    },
+    {
+      "train_phoneme_acc": 0.09302325546741486,
+      "train_g2p_structural_mse": 0.0005779262282885611,
+      "train_loss": 0.0005779262282885611,
+      "val_phoneme_acc": 0.03750883415341377,
+      "val_g2p_structural_mse": 0.0005776641191914678,
+      "val_loss": 0.0005776641191914678,
+      "epoch": 19
+    }
+  ]
+}

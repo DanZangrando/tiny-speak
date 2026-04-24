@@ -1,28 +1,26 @@
 """
-🧠 TinyReader (Stage 2) - Aprendiendo a Leer (P2W)
+🧠 TinyReader - Ensamblaje Léxico (Stage 2 P2W)
 """
 
 import streamlit as st
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pathlib import Path
 import torch
 import pandas as pd
-import time
-from datetime import datetime
 import json
-import os
-import matplotlib.pyplot as plt
+import numpy as np
 
 from components.modern_sidebar import display_modern_sidebar
-from components.diagrams import get_tiny_reader_diagram
+from components.diagrams import get_reader_diagram, get_tiny_reader_diagram, get_latent_mapping_diagram
 from components.code_viewer import get_function_source
-from models import TinyReader
+from components.analytics import plot_learning_curves, plot_dtw_alignment
+from models.tiny_reader import TinyReader, TinyReaderP2W
+from training.reader_dataset import build_reader_dataloaders
 from training.reader_module import TinyReaderLightning
-from training.audio_dataset import build_audio_dataloaders, DEFAULT_AUDIO_SPLIT_RATIOS
-from training.config import load_master_dataset_config
-from utils import list_checkpoints, encontrar_device, save_model_metadata, RealTimePlotCallback, ReaderPredictionCallback
-from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report, plot_probability_matrix, plot_latent_space_pca
+from training.config import load_master_dataset_config, save_master_dataset_config
+from utils.device import encontrar_device
+from utils.graphemes import get_default_words
+from utils.checkpoints import list_checkpoints
 
 # Configurar página
 st.set_page_config(
@@ -35,7 +33,7 @@ def get_custom_css():
     return """
     <style>
     .main-header {
-        background: linear-gradient(90deg, #FF6B6B, #556270);
+        background: linear-gradient(90deg, #bb66ff, #ff66d9);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-size: 2.5rem;
@@ -47,731 +45,348 @@ def get_custom_css():
         background-color: var(--secondary-background-color);
         padding: 1.5rem;
         border-radius: 10px;
-        border-left: 5px solid #FF6B6B;
+        border-left: 5px solid #bb66ff;
         margin-bottom: 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     </style>
     """
 
-class ReaderHistoryCallback(pl.Callback):
-    def __init__(self):
-        self.history = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        metrics = {k: v.item() if isinstance(v, torch.Tensor) else v 
-                  for k, v in trainer.callback_metrics.items()}
-        metrics['epoch'] = trainer.current_epoch
-        self.history.append(metrics)
+def get_active_models():
+    ckpts = list_checkpoints("tiny_reader")
+    active = {}
+    for c in ckpts:
+        lang = c['meta'].get('config', {}).get('language')
+        if lang and lang not in active:
+            active[lang] = c
+    return active
 
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
     display_modern_sidebar("tiny_reader")
     
-    st.markdown('<h1 class="main-header">🧠 TinyReader: Aprendiendo a Leer (Stage 2)</h1>', unsafe_allow_html=True)
-
-    tabs = st.tabs(["📐 Arquitectura", "🏃‍♂️ Entrenamiento", "💾 Modelos Guardados", "🧪 Laboratorio"])
+    st.markdown('<h1 class="main-header">🧠 TinyReader: Ensamblaje Léxico Final (P2W)</h1>', unsafe_allow_html=True)
+    
+    tabs = st.tabs([
+        "📉 Entrenamiento Lotes", 
+        "🧪 Historial y Resultados", 
+        "🔍 Laboratorio Interactivo",
+        "📐 Arquitectura Estructural"
+    ])
+    config = load_master_dataset_config()
+    languages = config.get('experiment_config', {}).get('languages', ['es', 'en', 'fr'])
+    active_models = get_active_models()
 
     # ==========================================
-    # TAB 1: ARQUITECTURA
+    # TAB 1: ENTRENAMIENTO Y MODELOS
     # ==========================================
     with tabs[0]:
-        st.markdown("### 📖 Stage 2: Phoneme-to-Word (P2W)")
-        
-        st.markdown("""
-        ### 📖 TinyReader: Acceso Léxico (Phoneme-to-Word)
+        st.markdown("### 📊 Modelos Activos")
+        if not active_models:
+            st.info("No hay modelos entrenados actualmente. Inicia el entrenamiento por lotes abajo.")
+        else:
+            cols = st.columns(len(languages))
+            for i, lang in enumerate(languages):
+                with cols[i]:
+                    st.markdown(f"#### Idioma: {lang.upper()}")
+                    if lang in active_models:
+                        ckpt = active_models[lang]
+                        meta = ckpt.get('meta', {})
+                        st.success("✅ Modelo Listo")
+                        metrics = meta.get('metrics', {})
+                        st.json({
+                            "Épocas": meta.get('config', {}).get('epochs'),
+                            "Val MSE": round(metrics.get('val_word_structural_mse', metrics.get('val_loss', 0.0)), 5),
+                            "Val CE": round(metrics.get('val_word_categorical_ce', 0.0), 4),
+                            "Actualizado": ckpt.get('date', 'Desconocido')
+                        })
+                    else:
+                        st.warning("⚠️ Pendiente de entrenar")
 
-        #### 1. Filosofía de Diseño: De Sonidos a Significados
-        Esta etapa completa la ruta de lectura. Una vez que TinySpeller ha convertido las letras en sonidos (fonemas), TinyReader debe ensamblar esos sonidos para acceder al significado (la palabra).
-        
-        *   **Simulación del Reconocimiento Auditivo de Palabras:** El cerebro no "lee" fonema por fonema aisladamente; integra la secuencia fonológica para activar una representación léxica.
-        *   **Juez Léxico:** Usamos *TinyEars (Words)* como el estándar de oro. TinyReader debe producir una representación que active el "área de la palabra" de la misma forma que lo haría escuchar la palabra hablada.
+        st.divider()
+        st.markdown("### ⚙️ Iniciar Entrenamiento")
+        train_config = config.get("training_params", {}).get("tiny_reader", {})
+        col1, col2 = st.columns(2)
+        with col1:
+            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=train_config.get("epochs", 100))
+            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=train_config.get("batch_size", 16))
+        with col2:
+            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=train_config.get("lr", 1e-3), format="%.5f")
+            w_mse = st.slider("Peso de Alineación Estructural (MSE)", 0.0, 2.0, train_config.get("w_mse", 1.0), 0.1, key="tr_wmse")
+            w_perceptual = st.slider("Peso Categórico (Cross-Entropy)", 0.0, 2.0, train_config.get("w_perceptual", 0.5), 0.1, key="tr_wper")
+            
+        if st.button("🚀 Iniciar Entrenamiento por Lotes (Todos los Idiomas)", type="primary"):
+            if "training_params" not in config:
+                config["training_params"] = {}
+            config["training_params"]["tiny_reader"] = {
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr,
+                "w_mse": w_mse,
+                "w_perceptual": w_perceptual
+            }
+            save_master_dataset_config(config)
+            
+            from training.runner import train_reader
+            
+            st.markdown("### 📈 Progreso de Entrenamiento...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            plots_container = st.container()
+            prediction_placeholder = st.empty()
 
-        #### 2. Arquitectura Cognitiva
-        El modelo actúa como un integrador temporal:
-        
-        *   **Input:** Secuencia de embeddings fonémicos (generados por TinySpeller o ideales).
-        *   **Procesamiento:** Red Recurrente (LSTM) o Transformer que acumula evidencia a lo largo de la secuencia fonémica.
-        *   **Output:** Un único vector de palabra (Word Embedding) que se compara con el espacio latente de TinyEars (Words).
-
-        #### 3. Input/Output
-        *   **Entrada:** Secuencia de Embeddings Fonémicos.
-        *   **Salida:** Embedding Léxico y clasificación de la palabra.
-        """)
-        
-        st.graphviz_chart(get_tiny_reader_diagram())
+            for i, lang in enumerate(languages):
+                status_text.markdown(f"**Entrenando TinyReader (P2W) para {lang.upper()}... ({i+1}/{len(languages)})**")
+                
+                audio_data = config.get('generated_samples', {}).get(lang, {})
+                if not audio_data:
+                    st.warning(f"Saltando {lang}: No se encontraron datos de palabras.")
+                    continue
+                
+                speller_path = f"data/checkpoints/tiny_speller/{lang}/best_model.ckpt"
+                lis_path = f"data/checkpoints/tiny_ears_words/{lang}/best_model.ckpt"
+                
+                if not Path(speller_path).exists() or not Path(lis_path).exists():
+                    st.error(f"❌ Faltan dependencias para {lang} (TinySpeller o TinyEars Words).")
+                    continue
+                
+                rec_path = f"data/checkpoints/tiny_eyes/{lang}/best_model.ckpt"
+                
+                with plots_container:
+                    st.markdown(f"#### Entrenamiento: {lang.upper()}")
+                    col_plot1, col_plot2 = st.columns(2)
+                    plot_loss = col_plot1.empty()
+                    plot_acc = col_plot2.empty()
+                plot_placeholders = (plot_loss, plot_acc)
+                
+                train_conf = {
+                    "epochs": epochs,
+                    "lr": lr,
+                    "batch_size": batch_size,
+                    "w_mse": w_mse,
+                    "w_perceptual": w_perceptual,
+                    "use_two_stage": True,
+                    "training_phase": "p2w",
+                    "pretrained_speller_ckpt": speller_path
+                }
+                
+                try:
+                    ckpt_path, hist = train_reader(
+                        lang, 
+                        listener_ckpt=lis_path, 
+                        recognizer_ckpt=rec_path, 
+                        config=train_conf, 
+                        plot_placeholders=plot_placeholders,
+                        prediction_placeholder=prediction_placeholder
+                    )
+                    st.success(f"✅ {lang.upper()} guardado: `{ckpt_path}`")
+                except Exception as e:
+                    st.error(f"❌ Error en {lang}: {e}")
+                
+                progress_bar.progress((i + 1) / len(languages))
+            
+            st.success("🎉 Entrenamientos completados. Por favor refresca la página.")
 
     # ==========================================
-    # TAB 2: ENTRENAMIENTO
+    # TAB 2: RESULTADOS GLOBALES E HISTORIAL
     # ==========================================
     with tabs[1]:
-        st.markdown("### ⚙️ Configuración del Entrenamiento (P2W)")
-        
-        config = load_master_dataset_config()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### Hiperparámetros")
-            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=50)
-            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=16)
-            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=1e-3, format="%.5f")
-            
-            st.markdown("#### Pesos de Loss")
-            w_dtw = st.slider("Peso Soft-DTW (Alineación)", 0.0, 2.0, 1.0, 0.1)
-            w_perceptual = st.slider("Peso Perceptual (Feature Matching)", 0.0, 2.0, 0.5, 0.1)
-            
-        with col2:
-            st.markdown("#### Componentes Previos")
-            
-            # 1. TinySpeller (Stage 1)
-            speller_ckpts = list_checkpoints("reader")
-            # Filtrar spellers
-            valid_spellers = [c for c in speller_ckpts if "speller" in c['filename'] or c.get('meta', {}).get('config', {}).get('training_phase') == 'g2p']
-            
-            if not valid_spellers:
-                st.error("❌ No hay modelos TinySpeller (Stage 1) disponibles. Entrena uno en 'TinySpeller'.")
-                st.stop()
-                
-            speller_opts = {c['filename']: c['path'] for c in valid_spellers}
-            sel_speller = st.selectbox("TinySpeller (G2P - Congelado)", list(speller_opts.keys()))
-            
-            # 2. Listener (Words)
-            lis_ckpts = list_checkpoints("listener")
-            # Filtrar palabras
-            word_ckpts = [c for c in lis_ckpts if "word" in c['filename'] or c.get('meta', {}).get('config', {}).get('type') == 'word']
-            
-            if not word_ckpts:
-                st.error("❌ No hay modelos TinyEars (Palabras) disponibles. Entrena uno en 'TinyEars - Palabras'.")
-                st.stop()
-                
-            lis_opts = {c['filename']: c['path'] for c in word_ckpts}
-            sel_lis = st.selectbox("TinyEars (Juez Léxico)", list(lis_opts.keys()))
-            
-            # Dataset
-            target_language = st.selectbox("Idioma Objetivo", config.get('experiment_config', {}).get('languages', ['es']))
-            
-            # Para P2W, el output son palabras (audio)
-            audio_data = config.get('generated_samples', {}).get(target_language, {})
-            if audio_data:
-                # Filtrar vacíos y ordenar para coincidir con el dataset
-                words = sorted([w for w, s in audio_data.items() if s])
-            else:
-                words = []
-                
-            st.info(f"Entrenando sobre {len(words)} palabras.")
-
-        if st.button("🚀 Iniciar Entrenamiento P2W (Stage 2)", type="primary"):
-            # Setup
-            pl.seed_everything(42)
-            
-            # 1. Construir Dataloaders PRIMERO
-            try:
-                train_ds, val_ds, test_ds, loaders = build_audio_dataloaders(
-                    batch_size=batch_size,
-                    target_language=target_language,
-                    num_workers=4,
-                    seed=42,
-                    use_phonemes=False # P2W uses words as targets, not phonemes directly from dataset
-                )
-                
-                words = train_ds.class_names
-                st.success(f"Dataset cargado con {len(words)} palabras.")
-                
-            except Exception as e:
-                st.error(f"Error cargando datos: {e}")
-                st.stop()
-                
-            # 2. Inicializar Modelo
-            if not words:
-                 st.error("⚠️ No se encontraron datos válidos en el dataset.")
-                 st.stop()
-                 
-            # Cargar metadata del speller para obtener el recognizer usado
-            speller_path = speller_opts[sel_speller]
-            # Intentar leer metadata
-            meta_path = Path(speller_path).with_suffix(".ckpt.meta.json")
-            rec_ckpt_path = None
-            phoneme_listener_path = None
-            
-            if meta_path.exists():
-                with open(meta_path) as f:
-                    meta = json.load(f)
-                    rec_ckpt_path = meta.get('config', {}).get('recognizer_ckpt')
-                    phoneme_listener_path = meta.get('config', {}).get('listener_ckpt')
-            
-            if not rec_ckpt_path:
-                st.warning("⚠️ No se encontró el Recognizer en la metadata del Speller. Intentando buscar uno compatible...")
-                # Fallback logic...
-                rec_ckpts = list_checkpoints("recognizer")
-                if rec_ckpts:
-                    rec_ckpt_path = rec_ckpts[0]['path']
-                else:
-                    st.error("No se encontró ningún Recognizer.")
-                    st.stop()
-                    
-            if not phoneme_listener_path:
-                 st.warning("⚠️ No se encontró el Phoneme Listener en la metadata del Speller.")
-                 # Fallback logic...
-                 lis_ckpts = list_checkpoints("listener")
-                 phoneme_ckpts = [c for c in lis_ckpts if "phoneme" in c['filename']]
-                 if phoneme_ckpts:
-                     phoneme_listener_path = phoneme_ckpts[0]['path']
-                 else:
-                     st.error("No se encontró ningún Phoneme Listener.")
-                     st.stop()
-
-            # Modelo
-            # Aquí cargamos el modelo base pero le decimos que use el checkpoint del speller como base
-            # TinyReaderLightning manejará la carga de pesos si se le pasa pretrained_reader_ckpt?
-            # No, TinyReaderLightning no tiene argumento 'pretrained_reader_ckpt' en __init__.
-            # Debemos cargar el checkpoint del speller y luego modificarlo para Stage 2?
-            # O inicializar uno nuevo y cargar los pesos del G2P?
-            
-            # Opción A: Inicializar nuevo y cargar pesos.
-            model = TinyReaderLightning(
-                class_names=words,
-                listener_checkpoint_path=lis_opts[sel_lis], # Word Listener
-                recognizer_checkpoint_path=rec_ckpt_path,
-                learning_rate=lr,
-                w_dtw=w_dtw,
-                w_perceptual=w_perceptual,
-                use_two_stage=True,
-                training_phase="p2w", # FASE P2W
-                phoneme_listener_checkpoint_path=phoneme_listener_path
-            )
-            
-            # Cargar pesos del Speller (G2P)
-            # El Speller tiene weights para 'reader_g2p'.
-            # Cargamos el checkpoint
-            speller_ckpt = torch.load(speller_path, map_location=encontrar_device())
-            state_dict = speller_ckpt['state_dict']
-            
-            # Filtrar solo las keys de reader_g2p
-            g2p_weights = {k: v for k, v in state_dict.items() if "reader_g2p" in k}
-            
-            # Cargar en el modelo actual
-            missing, unexpected = model.load_state_dict(g2p_weights, strict=False)
-            
-            # Verificar si faltan pesos CRÍTICOS (del propio G2P)
-            missing_g2p = [k for k in missing if "reader_g2p" in k]
-            
-            if missing_g2p:
-                st.warning(f"⚠️ Alerta: Faltan {len(missing_g2p)} pesos del módulo G2P: {missing_g2p[:5]}...")
-            else:
-                st.success(f"✅ Pesos de G2P cargados correctamente.")
-
-            # TAMBIÉN cargar el Phoneme Listener del Speller (si fue fine-tuned)
-            # El Speller (TinyReaderLightning en fase g2p) entrena todo, incluido el listener.
-            # Si no cargamos su estado, el G2P generará embeddings para un listener distinto.
-            ph_listener_weights = {k.replace("phoneme_listener.", ""): v for k, v in state_dict.items() if "phoneme_listener" in k}
-            if ph_listener_weights:
-                try:
-                    model.phoneme_listener.load_state_dict(ph_listener_weights)
-                    st.success(f"✅ Phoneme Listener actualizado desde el checkpoint del Speller ({len(ph_listener_weights)} pesos).")
-                except Exception as e:
-                    st.warning(f"⚠️ No se pudo actualizar Phoneme Listener desde Speller: {e}")
-            else:
-                st.info("ℹ️ El checkpoint del Speller no contiene pesos de Phoneme Listener (usando original).")
-            
-            # Callbacks
-            history_cb = ReaderHistoryCallback()
-            early_stop_callback = EarlyStopping(
-                monitor="val_loss",
-                min_delta=0.001,
-                patience=10,
-                verbose=True,
-                mode="min"
-            )
-            
-            checkpoint_callback = ModelCheckpoint(
-                dirpath="models/reader_checkpoints",
-                filename="tiny_reader_stage2-{epoch:02d}-{val_loss:.2f}",
-                save_top_k=1,
-                monitor="val_loss",
-                mode="min"
-            )
-            
-            trainer = pl.Trainer(
-                max_epochs=epochs,
-                accelerator="auto",
-                devices=1,
-                callbacks=[history_cb, early_stop_callback, checkpoint_callback],
-                enable_progress_bar=True,
-                default_root_dir="lightning_logs/tiny_reader_stage2"
-            )
-            
-            # Placeholders
-            st.markdown("### 📈 Progreso")
-            col_plot1, col_plot2 = st.columns(2)
-            with col_plot1:
-                st.markdown("#### Pérdida (Loss)")
-                plot_loss = st.empty()
-            with col_plot2:
-                st.markdown("#### Precisión (Palabras)")
-                plot_acc = st.empty()
-                
-            realtime_cb = RealTimePlotCallback(plot_loss, plot_acc)
-            trainer.callbacks.append(realtime_cb)
-            
-            # Prediction Callback
-            pred_placeholder = st.empty()
-            pred_cb = ReaderPredictionCallback(loaders['val'], pred_placeholder)
-            trainer.callbacks.append(pred_cb)
-            
-            with st.spinner("Entrenando TinyReader (Stage 2 - P2W)..."):
-                trainer.fit(model, train_dataloaders=loaders['train'], val_dataloaders=loaders['val'])
-                
-            st.success("Entrenamiento completado!")
-            
-            # Guardar
-            save_dir = Path("models/reader")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            final_path = save_dir / f"tiny_reader_stage2_{target_language}_{timestamp}.ckpt"
-            trainer.save_checkpoint(final_path)
-            
-            meta_config = {
-                "epochs": epochs, "lr": lr, "batch_size": batch_size,
-                "weights": {"dtw": w_dtw, "perceptual": w_perceptual},
-                "speller_ckpt": speller_opts[sel_speller],
-                "listener_ckpt": lis_opts[sel_lis],
-                "language": target_language,
-                "vocab": words,
-                "training_phase": "p2w",
-                "type": "reader"
-            }
-            final_metrics = history_cb.history[-1] if history_cb.history else {}
-            save_model_metadata(final_path, meta_config, final_metrics)
-            
-            if history_cb.history:
-                pd.DataFrame(history_cb.history).to_csv(final_path.with_suffix(".csv"), index=False)
-                
-            st.info(f"Modelo guardado en {final_path}")
-
-    # ==========================================
-    # TAB 3: MODELOS GUARDADOS
-    # ==========================================
-    with tabs[2]:
-        st.markdown("### 📚 Modelos TinyReader (P2W / End-to-End)")
-        all_ckpts = list_checkpoints("reader")
-        # Filtrar modelos que sean de stage 2 o end_to_end
-        reader_ckpts = [c for c in all_ckpts if "reader" in c['filename'] and "speller" not in c['filename']]
-        
-        if not reader_ckpts:
-            st.info("No hay modelos TinyReader entrenados.")
+        st.markdown("### 🧪 Historial y Resultados Generales")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
         else:
-            opts = {c['filename']: c for c in reader_ckpts}
-            sel_key = st.selectbox("Seleccionar Modelo", list(opts.keys()))
-            sel_ckpt = opts[sel_key]
+            from components.analytics import plot_training_history
             
-            col_act1, col_act2 = st.columns([1, 3])
-            with col_act1:
-                if st.button("🗑️ Eliminar", key="del_rd"):
-                    Path(sel_ckpt['path']).unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
-                    st.rerun()
-            
+            st.markdown("#### Progreso de Entrenamiento Registrado")
+            hist_cols = st.columns(len(active_models))
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with hist_cols[i]:
+                    st.markdown(f"**🌍 {lang_eval.upper()} - Ciclo de Entrenamiento**")
+                    history_data = ckpt_info.get('meta', {}).get('history', [])
+                    plot_training_history(history_data)
+                    
             st.divider()
             
-            # --- EVALUACIÓN PROFUNDA ---
-            st.markdown("### 🔬 Evaluación Profunda (Full Pipeline)")
-            st.info("Esta evaluación prueba la cadena completa: Texto -> TinyEyes -> TinySpeller -> TinyReader -> Significado.")
+            st.markdown("#### 🌍 Evaluación de Integración Léxica por Idioma")
+            eval_cols = st.columns(len(active_models))
             
-            if st.button("🚀 Cargar y Evaluar Modelo", key="eval_deep_reader"):
-                with st.spinner("Cargando modelo y ejecutando evaluación..."):
+            import pickle
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with eval_cols[i]:
+                    st.markdown(f"### 🌍 {lang_eval.upper()}")
                     try:
-                        # 1. Cargar Modelo
-                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
-                        words = []
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta = json.load(f)
-                                words = meta.get('config', {}).get('vocab', [])
+                        eval_path = Path(ckpt_info['path']).parent / "eval_results.pkl"
                         
-                        kwargs = {"class_names": words} if words else {}
+                        if eval_path.exists():
+                            with open(eval_path, "rb") as f:
+                                eval_data_raw = pickle.load(f)
+                            
+                            # Cargar datos estandarizados
+                            samples = eval_data_raw.get("samples", [])
+                            confusion = eval_data_raw.get("confusion", {})
+                            embeddings = eval_data_raw.get("embeddings", [])
+                            labels = eval_data_raw.get("labels", [])
+                            
+                            st.success(f"Evaluación {lang_eval.upper()} cargada.")
+                            
+                            # 1. Reporte de Clasificación Detallado (Orden unificado con Speller)
+                            if confusion.get("y_true"):
+                                st.markdown("#### 📋 Reporte de Clasificación Detallado")
+                                from components.analytics import display_classification_report
+                                display_classification_report(
+                                    confusion["y_true"], 
+                                    confusion["y_pred"], 
+                                    confusion["class_names"]
+                                )
+                            else:
+                                st.info("ℹ️ Completa un ciclo de entrenamiento para ver el reporte detallado.")
+
+                            # 2. PCA (Espacio Latente Léxico)
+                            if len(embeddings) > 0:
+                                st.markdown("#### 🌌 Espacio Latente (PCA 3D)")
+                                from components.analytics import plot_latent_space_pca
+                                n_pca = min(len(embeddings), 500)
+                                plot_latent_space_pca(
+                                    np.array(embeddings)[:n_pca], 
+                                    np.array(labels)[:n_pca], 
+                                    confusion.get("class_names", [])
+                                )
+                            
+                            # 3. Muestras Individuales
+                            st.markdown("#### 📖 Muestras de Ensamblaje")
+                            for item in samples:
+                                label = item.get("word") or item.get("label_str")
+                                pred = item.get("prediction")
+                                target = item.get("target")
+                                
+                                with st.expander(f"Muestra: {label}"):
+                                    if pred and target:
+                                        st.write(f"**Target:** {target}")
+                                        st.write(f"**Pred:** {pred}")
+                                        conf = item.get("confidence", 0)
+                                        st.progress(conf, text=f"Confianza: {conf:.2%}")
+                                    else:
+                                        st.write(f"**Predicción:** {pred}")
+                        else:
+                            st.warning(f"⚠️ Sin evaluación para {lang_eval}.")
+                    except Exception as e:
+                        st.error(f"Error en {lang_eval}: {e}")
+
+    # ==========================================
+    # TAB 3: LABORATORIO INTERACTIVO
+    # ==========================================
+    with tabs[2]:
+        st.markdown("### 🔍 Laboratorio Interactivo")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
+        else:
+            lang_lab = st.selectbox("Seleccionar Idioma para Pruebas Manuales", list(active_models.keys()), key="lab_lang")
+            ckpt_lab = active_models[lang_lab]
+            
+            if st.button(f"🎧 Sintetizar Palabra Visual P2W para {lang_lab.upper()}", type="primary"):
+                with st.spinner("Decodificando..."):
+                    try:
+                        lis_path = f"data/checkpoints/tiny_ears_words/{lang_lab}/best_model.ckpt"
+                        if not Path(lis_path).exists():
+                            st.warning("No se encontró TinyEars Words para predecir con certeza.")
                         
-                        model = TinyReaderLightning.load_from_checkpoint(sel_ckpt['path'], **kwargs)
+                        meta_config = ckpt_lab.get('meta', {}).get('config', {})
+                        model_hparams = {k: v for k, v in meta_config.items() if k in ["hidden_dim", "output_dim", "num_layers"]}
+                        if not model_hparams:
+                            model_hparams = config.get("architectures", {}).get("tiny_reader", {})
+                        
+                        model = TinyReaderLightning.load_from_checkpoint(
+                            ckpt_lab['path'], 
+                            strict=False,
+                            **model_hparams
+                        )
                         model.eval()
                         device = encontrar_device()
                         model.to(device)
                         
-                        # Si no había metadata, intentar recuperar vocabulario del modelo
-                        if not words and hasattr(model, "class_names"):
-                            words = model.class_names
-                            st.warning("⚠️ Metadata no encontrada. Usando vocabulario guardado en el checkpoint.")
-                        
-                        # 2. Cargar Datos (Validation)
-                        target_lang = model.hparams.get('target_language', 'es')
-                        if meta_path.exists():
-                             with open(meta_path) as f:
-                                meta = json.load(f)
-                                target_lang = meta.get('config', {}).get('language', 'es')
-
-                        _, _, _, loaders = build_audio_dataloaders(
-                            batch_size=16,
-                            target_language=target_lang,
-                            num_workers=0,
-                            seed=42,
-                            use_phonemes=False # Usamos palabras completas
+                        _, _, _, loaders = build_reader_dataloaders(
+                            batch_size=32, num_workers=0, seed=42, target_language=lang_lab, use_phoneme_targets=False
                         )
-                        val_loader = loaders['val']
                         
-                        # 3. Loop de Inferencia
-                        all_real_words = []
-                        all_pred_words = []
-                        all_similarities = []
-                        all_gen_embeddings_list = []
-                        all_labels_idx = []
-                        all_preds_idx = []
+                        val_ds = loaders['val'].dataset
+                        # Obtener todas las palabras disponibles en el set de validación
+                        available_words = sorted(list(set([val_ds[i]["label_str"] for i in range(len(val_ds))])))
                         
-                        results_data = []
+                        target_word = st.selectbox("Seleccionar palabra a predecir", available_words, key=f"sel_07_{lang_lab}")
                         
-                        from utils import get_phonemes_from_word
-                        from torch.nn.functional import cosine_similarity
-                        from torch.nn.utils.rnn import pad_sequence
+                        found_item = None
+                        for i in range(len(val_ds)):
+                            item = val_ds[i]
+                            if item["label_str"] == target_word:
+                                found_item = item
+                                break
+                                
+                        if found_item is not None:
+                            images = found_item["image"].to(device).unsqueeze(0)
+                            target_audios = found_item["waveform"].to(device)
+                            label = found_item["label_str"]
+                            
+                            pred_audio = model(images)
+                            
+                            st.markdown(f"#### Etiqueta Semántica Base: `{label}`")
+                            fig = plot_dtw_alignment(pred_audio[0], target_audios)
+                            st.pyplot(fig)
+                            
+                            sr = 16000
+                            st.markdown("##### Fonología Sintetizada P2W (Diferida)")
+                            st.audio(pred_audio[0].cpu().numpy(), sample_rate=sr)
+                            st.markdown("##### Fonología Real de Contraste")
+                            st.audio(target_audios.cpu().numpy(), sample_rate=sr)
+                        else:
+                            st.warning("No se encontraron muestras en validación.")
                         
-                        progress_bar = st.progress(0)
-                        total_batches = len(val_loader)
-                        
-                        correct_count = 0
-                        total_count = 0
-                        
-                        with torch.no_grad():
-                            for batch_idx, batch in enumerate(val_loader):
-                                batch_words = batch['words']
-                                waveforms = [w.to(device) for w in batch['waveforms']]
-                                
-                                # A. Pipeline Visual -> G2P
-                                logits_sequences = []
-                                for w in batch_words:
-                                    images = model._get_word_images(w).to(device)
-                                    res = model.recognizer(images)
-                                    word_logits = res[0] if isinstance(res, tuple) else res
-                                    logits_sequences.append(word_logits)
-                                padded_logits = pad_sequence(logits_sequences, batch_first=True, padding_value=0.0)
-                                
-                                # Calcular longitudes de fonemas esperadas (para G2P)
-                                phoneme_targets_list = []
-                                for w in batch_words:
-                                    ph = get_phonemes_from_word(w)
-                                    idxs = [model.phoneme_to_idx.get(p, 0) for p in ph]
-                                    if not idxs: idxs = [0]
-                                    phoneme_targets_list.append(idxs)
-                                max_len_phonemes = max(len(t) for t in phoneme_targets_list)
-                                
-                                # Ejecutar G2P
-                                gen_phoneme_embs = model.reader_g2p(padded_logits, target_length=max_len_phonemes)
-                                
-                                # B. Pipeline P2W (TinyReader)
-                                # Necesitamos la longitud del audio real para saber cuánto generar?
-                                # O TinyReader genera una longitud fija/aprendida?
-                                # En _shared_step usa max_len del audio real.
-                                # Para inferencia pura, deberíamos no depender del audio real si es "lectura silenciosa".
-                                # Pero TinyReader P2W genera una secuencia que imita al audio.
-                                # Vamos a usar la longitud del audio real como "duración de lectura" por ahora para comparar.
-                                
-                                waveforms_padded = pad_sequence(waveforms, batch_first=True)
-                                real_embeddings = model.listener.extract_hidden_activations(waveforms_padded)
-                                real_embeddings, lengths = model.listener.mask_hidden_activations(real_embeddings)
-                                real_embeddings, lengths = model.listener.downsample_hidden_activations(real_embeddings, lengths, factor=7)
-                                real_embeddings = real_embeddings.squeeze(0) # (1, B, T, D) -> (B, T, D)
-                                max_len_audio = real_embeddings.size(1)
-                                
-                                gen_word_seq = model.reader_p2w(gen_phoneme_embs, target_length=max_len_audio)
-                                
-                                # C. Pooling y Clasificación
-                                # Global Average Pooling (masked)
-                                mask = torch.arange(max_len_audio, device=device).expand(len(batch_words), max_len_audio) < lengths.unsqueeze(1)
-                                mask_float = mask.float().unsqueeze(-1)
-                                pooled_gen = (gen_word_seq * mask_float).sum(dim=1) / mask_float.sum(dim=1).clamp(min=1e-9)
-                                
-                                listener_logits = model.listener.classifier(pooled_gen)
-                                preds = torch.argmax(listener_logits, dim=-1)
-                                
-                                # D. Ground Truth (Audio Real)
-                                # Pooled Real Embeddings
-                                pooled_real = (real_embeddings * mask_float).sum(dim=1) / mask_float.sum(dim=1).clamp(min=1e-9)
-                                
-                                # E. Análisis
-                                for b in range(len(batch_words)):
-                                    word = batch_words[b]
-                                    pred_idx = preds[b].item()
-                                    pred_word = model.class_names[pred_idx] if pred_idx < len(model.class_names) else "Unknown"
-                                    
-                                    all_real_words.append(word)
-                                    all_pred_words.append(pred_word)
-                                    
-                                    # Guardar índices para matriz de confusión
-                                    # IMPORTANTE: Usar el índice del vocabulario del MODELO, no del dataloader
-                                    # Esto evita errores si el dataset ha cambiado (off-by-one)
-                                    try:
-                                        true_idx = model.class_names.index(word)
-                                    except ValueError:
-                                        true_idx = -1 # Palabra no está en el vocabulario del modelo
-                                        
-                                    all_labels_idx.append(true_idx)
-                                    all_preds_idx.append(pred_idx)
-                                    
-                                    # Similitud Cosine (Word Embedding Level)
-                                    sim = cosine_similarity(pooled_real[b].unsqueeze(0), pooled_gen[b].unsqueeze(0)).item()
-                                    all_similarities.append(sim)
-                                    
-                                    # Guardar embedding para PCA
-                                    all_gen_embeddings_list.append(pooled_gen[b].cpu().numpy())
-                                    
-                                    results_data.append({
-                                        "Palabra Real": word,
-                                        "Palabra Predicha": pred_word,
-                                        "Similitud": f"{sim:.4f}",
-                                        "Acierto": "✅" if word == pred_word else "❌"
-                                    })
-                                    
-                                    if word == pred_word:
-                                        correct_count += 1
-                                    total_count += 1
-                                
-                                progress_bar.progress((batch_idx + 1) / total_batches)
-                                
-                        st.success("Evaluación Finalizada")
-                        
-                        # 4. Visualización
-                        
-                        # A. Métricas Globales
-                        acc = correct_count / total_count if total_count > 0 else 0
-                        col_m1, col_m2, col_m3 = st.columns(3)
-                        col_m1.metric("Exactitud (Accuracy)", f"{acc:.2%}")
-                        col_m2.metric("Similitud Promedio", f"{sum(all_similarities)/len(all_similarities):.4f}")
-                        col_m3.metric("Total Palabras", total_count)
-                        
-                        # B. Tabla
-                        st.markdown("#### 📝 Resultados Detallados")
-                        st.dataframe(pd.DataFrame(results_data))
-                        
-                        # C. Matriz de Confusión
-                        if all_labels_idx and all_preds_idx:
-                            st.markdown("#### 😵 Matriz de Confusión")
-                            try:
-                                plot_confusion_matrix(all_labels_idx, all_preds_idx, model.class_names)
-                            except Exception as e:
-                                st.warning(f"No se pudo generar la matriz de confusión: {e}")
-                        
-                        # C. Histograma Similitud
-                        st.markdown("#### 📊 Distribución de Similitud (Semántica/Auditiva)")
-                        fig_hist, ax_hist = plt.subplots()
-                        ax_hist.hist(all_similarities, bins=20, color='lightgreen', edgecolor='black')
-                        ax_hist.set_title("Similitud entre 'Lectura Silenciosa' y 'Escucha Real'")
-                        st.pyplot(fig_hist)
-                        
-                        # D. PCA 3D
-                        st.markdown("#### 🎨 Espacio Léxico (PCA 3D)")
-                        st.info("Visualización de los embeddings de palabras generados por TinyReader. Cada punto es una palabra leída.")
-                        
-                        if len(all_gen_embeddings_list) > 5:
-                            try:
-                                from sklearn.decomposition import PCA
-                                import plotly.express as px
-                                
-                                pca = PCA(n_components=3)
-                                embeddings_3d = pca.fit_transform(all_gen_embeddings_list)
-                                
-                                df_pca = pd.DataFrame({
-                                    'x': embeddings_3d[:, 0],
-                                    'y': embeddings_3d[:, 1],
-                                    'z': embeddings_3d[:, 2],
-                                    'Palabra Real': all_real_words,
-                                    'Palabra Predicha': all_pred_words
-                                })
-                                
-                                fig = px.scatter_3d(
-                                    df_pca, 
-                                    x='x', y='y', z='z',
-                                    color='Palabra Real',
-                                    symbol='Palabra Real',
-                                    hover_data=['Palabra Predicha'],
-                                    title="Espacio Léxico Generado (3D)",
-                                    opacity=0.7,
-                                    size_max=10
-                                )
-                                fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-                                st.plotly_chart(fig, use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"No se pudo generar PCA: {e}")
-
                     except Exception as e:
-                        st.error(f"Error en evaluación: {e}")
-                        st.exception(e)
+                        st.error(f"Error cargando instancia: {e}")
 
     # ==========================================
-    # TAB 4: LABORATORIO
+    # TAB 4: ARQUITECTURA
     # ==========================================
     with tabs[3]:
-        st.markdown("### 🧪 Laboratorio Unificado")
-        st.markdown("Prueba el modelo TinyReader completo: **Texto -> Visión -> Fonología -> Significado**.")
+        st.markdown("### 📐 Arquitectura de la Red: TinyReader (P2W)")
+        st.info("Este módulo integra la secuencia de fonemas generada por el Speller para formar una concepto de palabra léxico.")
         
-        # 1. Selector de Modelo
-        # Usar list_checkpoints para consistencia y filtrado
-        all_ckpts = list_checkpoints("reader")
-        # Filtrar modelos que sean de stage 2 o end_to_end (igual que en Evaluación)
-        reader_ckpts = [c for c in all_ckpts if "reader" in c['filename'] and "speller" not in c['filename']]
+        arch_config = config.get("architectures", {}).get("tiny_reader", {})
         
-        if not reader_ckpts:
-            st.warning("⚠️ No hay modelos TinyReader (Stage 2) disponibles. Entrena uno en la pestaña 'Entrenamiento'.")
-        else:
-            ckpt_opts = {c['filename']: c['path'] for c in reader_ckpts}
-            
-            sel_ckpt_name = st.selectbox("Seleccionar Modelo Entrenado", list(ckpt_opts.keys()), key="lab_ckpt")
-            
-            if sel_ckpt_name:
-                ckpt_path = ckpt_opts[sel_ckpt_name]
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("#### Parámetros Técnicos (Sequential Integrator)")
+            with st.form("arch_form_tiny_reader"):
+                h_dim = st.number_input("Dimensión Oculta (hidden_dim)", min_value=64, max_value=2048, value=arch_config.get("hidden_dim", 256), step=64)
+                o_dim = st.number_input("Dimensión Salida Léxica (output_dim)", min_value=64, max_value=2048, value=arch_config.get("output_dim", 256), step=64)
+                n_layers = st.number_input("Capas Bi-LSTM", min_value=1, max_value=10, value=arch_config.get("num_layers", 2))
                 
-                if st.button("🚀 Cargar Modelo para Laboratorio", key="load_lab"):
-                    with st.spinner("Cargando modelo..."):
-                        try:
-                            # Cargar metadata si existe para saber vocabulario
-                            meta_path = Path(ckpt_path).with_suffix(".ckpt.meta.json")
-                            vocab = []
-                            if meta_path.exists():
-                                with open(meta_path) as f:
-                                    meta = json.load(f)
-                                    vocab = meta.get('config', {}).get('vocab', [])
-                            
-                            kwargs = {"class_names": vocab} if vocab else {}
-                            model = TinyReaderLightning.load_from_checkpoint(ckpt_path, **kwargs)
-                            model.eval()
-                            device = encontrar_device()
-                            model.to(device)
-                            st.session_state['lab_model'] = model
-                            st.success(f"Modelo cargado: {sel_ckpt_name}")
-                        except Exception as e:
-                            st.error(f"Error cargando modelo: {e}")
-                
-                # 2. Interfaz de Prueba
-                if 'lab_model' in st.session_state:
-                    model = st.session_state['lab_model']
-                    device = next(model.parameters()).device
+                if st.form_submit_button("💾 Guardar Configuración", type="primary"):
+                    if "architectures" not in config:
+                        config["architectures"] = {}
+                    config["architectures"]["tiny_reader"] = {
+                        "hidden_dim": h_dim,
+                        "output_dim": o_dim,
+                        "num_layers": n_layers
+                    }
+                    save_master_dataset_config(config)
+                    st.success("Configuración del Integrador Secuencial guardada.")
+                    st.rerun()
                     
-                    st.divider()
-                    test_word = st.text_input("Escribe una palabra para leer:", value="gato").strip().lower()
-                    
-                    if st.button("🧠 Leer e Imaginar", type="primary"):
-                        if not test_word:
-                            st.warning("Escribe una palabra.")
-                        else:
-                            with st.spinner(f"Procesando '{test_word}'..."):
-                                try:
-                                    # A. Tokenización Visual (Chancho Logic)
-                                    from utils import tokenize_graphemes
-                                    available_graphemes = list(model.visual_config.keys())
-                                    tokens = tokenize_graphemes(test_word, available_graphemes)
-                                    
-                                    st.write(f"**Tokenización Visual:** {tokens}")
-                                    
-                                    # Mostrar imágenes de entrada
-                                    images = model._get_word_images(test_word).to(device) # (L, 3, 64, 64)
-                                    
-                                    cols = st.columns(len(tokens))
-                                    for i, col in enumerate(cols):
-                                        with col:
-                                            # Convertir tensor a imagen para mostrar
-                                            img_tensor = images[i].cpu()
-                                            # Des-normalizar si es necesario (asumimos que transform lo hizo)
-                                            # Por simplicidad, mostramos lo que hay
-                                            img_np = img_tensor.permute(1, 2, 0).numpy()
-                                            img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min())
-                                            st.image(img_np, caption=tokens[i], use_container_width=True)
-                                    
-                                    # B. TinyEyes (Reconocimiento)
-                                    # (L, 3, 64, 64) -> Procesamos como batch de letras
-                                    res = model.recognizer(images)
-                                    logits_flat = res[0] # (L, num_chars)
-                                    logits = logits_flat.unsqueeze(0) # (1, L, num_chars)
-                                    
-                                    # C. TinySpeller (G2P) - Generación Serial (Uno a Uno)
-                                    # El usuario prefiere que se pase grafema por grafema para evitar repeticiones
-                                    gen_phoneme_embs_list = []
-                                    pred_phonemes = []
-                                    
-                                    # Iterar sobre cada "letra" (token visual)
-                                    for i in range(logits.size(1)):
-                                        # Tomar el logit de la letra i
-                                        # logits: (1, L, num_chars) -> (1, 1, num_chars)
-                                        char_logit = logits[:, i:i+1, :]
-                                        
-                                        # Generar 1 embedding de fonema para esta letra
-                                        # target_length=1 fuerza al modelo a generar un solo paso
-                                        g_emb = model.reader_g2p(char_logit, target_length=1) # (1, 1, D)
-                                        gen_phoneme_embs_list.append(g_emb)
-                                        
-                                        # Decodificar fonema (para visualización)
-                                        p_logits = model.phoneme_listener.classifier(g_emb)
-                                        p_idx = torch.argmax(p_logits, dim=-1).item()
-                                        if p_idx < len(model.phoneme_class_names):
-                                            pred_phonemes.append(model.phoneme_class_names[p_idx])
-                                        else:
-                                            pred_phonemes.append("?")
-                                            
-                                    # Concatenar embeddings para formar la secuencia completa
-                                    # (1, L, D)
-                                    # gen_phoneme_embs = torch.cat(gen_phoneme_embs_list, dim=1) # ESTO ROMPE EL CONTEXTO
-                                    
-                                    # SOLUCIÓN HÍBRIDA:
-                                    # 1. Usamos la generación iterativa SOLO para visualizar (Speller Prediction) - Ya hecho arriba
-                                    # 2. Usamos generación Full Sequence para pasar al Reader (P2W), PERO restringiendo la longitud
-                                    #    exactamente al número de tokens visuales para evitar repeticiones.
-                                    
-                                    # Recalcular logits completos
-                                    # padded_logits: (1, L, num_chars)
-                                    
-                                    # IMPORTANTE: Para que coincida con el entrenamiento/evaluación,
-                                    # la longitud objetivo debe ser la cantidad de FONEMAS, no de grafemas.
-                                    # En el Lab conocemos la palabra, así que podemos calcularlo.
-                                    from utils import get_phonemes_from_word
-                                    real_phonemes_list = get_phonemes_from_word(test_word)
-                                    target_len_exact = len(real_phonemes_list)
-                                    if target_len_exact == 0: target_len_exact = 1 # Fallback
-                                    
-                                    gen_phoneme_embs_contextual = model.reader_g2p(logits, target_length=target_len_exact)
-                                    
-                                    st.info(f"**Fonemas Predichos (TinySpeller):** {' - '.join(pred_phonemes)}")
-                                    
-                                    # D. TinyReader (P2W) -> Imaginación Auditiva
-                                    # Generar embedding de palabra usando los embeddings CONTEXTUALES
-                                    # Asumimos una duración de audio estándar (ej. 100 frames)
-                                    target_len_audio = 100
-                                    gen_word_seq = model.reader_p2w(gen_phoneme_embs_contextual, target_length=target_len_audio)
-                                    
-                                    # Pooling
-                                    pooled_gen = gen_word_seq.mean(dim=1) # (1, D)
-                                    
-                                    # E. Interpretación (Búsqueda de Vecinos)
-                                    # Comparar con embeddings de palabras conocidas (si tenemos un banco)
-                                    # Si no, usamos el clasificador del Listener
-                                    listener_logits = model.listener.classifier(pooled_gen)
-                                    probs = torch.softmax(listener_logits, dim=-1)
-                                    top_probs, top_idxs = torch.topk(probs, 5, dim=-1)
-                                    
-                                    st.markdown("### 🎯 Interpretación (Top 5)")
-                                    
-                                    results = []
-                                    for i in range(5):
-                                        idx = top_idxs[0, i].item()
-                                        prob = top_probs[0, i].item()
-                                        word_cls = model.class_names[idx] if idx < len(model.class_names) else "Unknown"
-                                        results.append({"Palabra": word_cls, "Confianza": f"{prob:.2%}"})
-                                        
-                                    st.table(results)
-                                    
-                                    if results[0]["Palabra"] == test_word:
-                                        st.balloons()
-                                        st.success(f"¡Leído correctamente como '{test_word}'!")
-                                    else:
-                                        st.warning(f"Confusión: Leído como '{results[0]['Palabra']}' en lugar de '{test_word}'.")
-                                        
-                                except Exception as e:
-                                    st.error(f"Error en inferencia: {e}")
-                                    st.exception(e)
+        with col_c2:
+            st.markdown("#### 🧠 Teoría: Ensamblaje Léxico (Many-to-One)")
+            st.markdown("""
+            El **TinyReader** actúa como un sintetizador de alto nivel:
+            
+            1. **Entrada Secuencial**: Recibe la serie de embeddings de fonemas producidos por el Stage 1.
+            2. **Integración Temporal**: Utiliza una **LSTM Bidireccional** para procesar la secuencia completa, capturando las relaciones entre fonemas en ambas direcciones.
+            3. **Colapso Semántico**: Los estados ocultos finales se concatanan y proyectan para generar un **único vector de palabra** que debe coincidir con la firma neural que el oído interno asocia con esa palabra.
+            
+            Este proceso emula la formación de una "imagen neural" de la palabra a partir de sus componentes fonológicos.
+            """)
+            st.graphviz_chart(get_latent_mapping_diagram(module_name="TinyReader", stage="P2W"))
+
+        with st.expander("💻 Ver Código del Modelo Base"):
+            st.code(get_function_source(TinyReaderP2W), language="python")
 
 if __name__ == "__main__":
     main()

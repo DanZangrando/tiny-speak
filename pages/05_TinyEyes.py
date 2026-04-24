@@ -1,49 +1,34 @@
 """
-🖼️ Visual Pathway (TinyRecognizer) - Entrenamiento y analítica sobre el dataset visual actual.
+👁️ TinyEyes - Reconocimiento Visual de Grafemas
 """
 
-from __future__ import annotations
-
-import copy
-import os
-import time
-from datetime import datetime
-from dataclasses import asdict, dataclass, replace
-import json
-from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
-
-import numpy as np
-import pandas as pd
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 import streamlit as st
+import pytorch_lightning as pl
+from pathlib import Path
 import torch
-from PIL import Image
-from matplotlib import pyplot as plt
+import pandas as pd
+import json
+import numpy as np
 
 from components.modern_sidebar import display_modern_sidebar
 from components.diagrams import get_recognizer_diagram
 from components.code_viewer import get_function_source
-from models import VisualPathway
-from training.visual_dataset import VisualLetterDataset, build_visual_dataloaders, DEFAULT_SPLIT_RATIOS
-from training.visual_module import VisualPathwayLightning
-from training.config import load_master_dataset_config
-from utils import (
-    WAV2VEC_DIM,
-    encontrar_device,
-    get_default_words,
-    load_waveform,
-    load_waveform,
-    list_checkpoints,
-    save_model_metadata,
-    RealTimePlotCallback
-)
 from components.analytics import plot_learning_curves, plot_confusion_matrix, display_classification_report
+from models import TinyEyes
+from training.visual_dataset import build_visual_dataloaders
+from training.visual_module import TinyEyesLightning
+from training.config import load_master_dataset_config, save_master_dataset_config
+from utils.device import encontrar_device
+from utils.checkpoints import list_checkpoints
 
-# Configurar página
+def format_accuracy(val):
+    """Asegura que el accuracy esté en rango 0-1 antes de aplicar .2%"""
+    if val > 1.0:
+        return val / 100.0
+    return val
+
 st.set_page_config(
-    page_title="TinyEyes - Visual",
+    page_title="TinyEyes - Grafemas",
     page_icon="👁️",
     layout="wide"
 )
@@ -52,7 +37,7 @@ def get_custom_css():
     return """
     <style>
     .main-header {
-        background: linear-gradient(90deg, #6a11cb, #2575fc);
+        background: linear-gradient(90deg, #ff9966, #ff5e62);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-size: 2.5rem;
@@ -64,22 +49,21 @@ def get_custom_css():
         background-color: var(--secondary-background-color);
         padding: 1.5rem;
         border-radius: 10px;
-        border-left: 5px solid #6a11cb;
+        border-left: 5px solid #ff5e62;
         margin-bottom: 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     </style>
     """
 
-class VisualHistoryCallback(pl.Callback):
-    def __init__(self):
-        self.history = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        metrics = {k: v.item() if isinstance(v, torch.Tensor) else v 
-                  for k, v in trainer.callback_metrics.items()}
-        metrics['epoch'] = trainer.current_epoch
-        self.history.append(metrics)
+def get_active_models():
+    ckpts = list_checkpoints("tiny_eyes")
+    active = {}
+    for c in ckpts:
+        lang = c['meta'].get('config', {}).get('language')
+        if lang and lang not in active:
+            active[lang] = c
+    return active
 
 def main():
     st.markdown(get_custom_css(), unsafe_allow_html=True)
@@ -87,456 +71,271 @@ def main():
     
     st.markdown('<h1 class="main-header">👁️ TinyEyes: Reconocimiento Visual</h1>', unsafe_allow_html=True)
     
-    tabs = st.tabs(["📐 Arquitectura", "🏃‍♂️ Entrenamiento", "💾 Modelos Guardados", "🧪 Laboratorio"])
+    tabs = st.tabs([
+        "📉 Entrenamiento Lotes", 
+        "🧪 Historial y Resultados", 
+        "🔍 Laboratorio Interactivo",
+        "📐 Arquitectura Estructural"
+    ])
+    config = load_master_dataset_config()
+    languages = config.get('experiment_config', {}).get('languages', ['es', 'en', 'fr'])
+    active_models = get_active_models()
 
     # ==========================================
-    # TAB 1: ARQUITECTURA
+    # TAB 1: ENTRENAMIENTO Y MODELOS
     # ==========================================
     with tabs[0]:
-        st.markdown("### 🧠 Visual Pathway (Vía Visual)")
-        
-        st.markdown("""
-        ### 👁️ TinyEyes: La Vía Visual (Ventral Stream)
+        st.markdown("### 📊 Modelos Activos")
+        if not active_models:
+            st.info("No hay modelos entrenados actualmente. Inicia el entrenamiento por lotes abajo.")
+        else:
+            cols = st.columns(len(languages))
+            for i, lang in enumerate(languages):
+                with cols[i]:
+                    st.markdown(f"#### Idioma: {lang.upper()}")
+                    if lang in active_models:
+                        ckpt = active_models[lang]
+                        meta = ckpt.get('meta', {})
+                        st.success("✅ Modelo Listo")
+                        st.json({
+                            "Épocas": meta.get('config', {}).get('epochs'),
+                            "Val Loss": round(meta.get('metrics', {}).get('val_loss', 0.0), 4),
+                            "Actualizado": ckpt.get('date', 'Desconocido')
+                        })
+                    else:
+                        st.warning("⚠️ Pendiente de entrenar")
 
-        #### 1. Evolución de la Arquitectura: De CORnet-S a TinyEyes
-        Inicialmente, exploramos el uso de **CORnet-S**, un modelo recurrente diseñado para mapear las áreas visuales del cerebro (V1, V2, V4, IT). Sin embargo, su complejidad dificultaba el análisis detallado del aprendizaje temprano.
-        
-        **TinyEyes** adopta una arquitectura CNN personalizada (V1→V2→V4→IT) entrenada desde cero:
-        *   **Control Total del Desarrollo:** Podemos observar paso a paso cómo la red aprende a discriminar bordes simples en V1 hasta integrar formas complejas en IT.
-        *   **Sin Cajas Negras:** A diferencia de usar una ResNet pre-entrenada, aquí cada filtro y activación es resultado directo de la exposición a nuestro dataset controlado, permitiendo una trazabilidad total del aprendizaje visual.
-
-        #### 2. Arquitectura Cognitiva
-        La red implementa una jerarquía convolucional que simula el procesamiento en la corteza visual ventral:
-        
-        *   **Input (Retina):** Imágenes de 64x64 píxeles (Fóvea).
-        *   **Capas Iniciales (V1/V2):** Detectores de bordes y texturas simples.
-        *   **Capas Medias (V4):** Integración de formas y contornos.
-        *   **Capas Profundas (IT - Corteza Temporal Inferior):** Reconocimiento de objetos complejos (letras/grafemas) invariantes a posición y tamaño.
-
-        #### 3. Input/Output
-        *   **Entrada:** Tensor de imagen (Batch, 3, 64, 64).
-        *   **Salida:** Vector de características (Embedding Visual) que representa la identidad abstracta del grafema.
-        """)
-        
-        st.graphviz_chart(get_recognizer_diagram())
-        
-        with st.expander("💻 Ver Código del Modelo (models.py)"):
-            st.code(get_function_source(VisualPathway), language="python")
-
-    # ==========================================
-    # TAB 2: ENTRENAMIENTO
-    # ==========================================
-    with tabs[1]:
-        st.markdown("### ⚙️ Configuración del Experimento")
-        
+        st.divider()
+        st.markdown("### ⚙️ Iniciar Entrenamiento")
+        train_config = config.get("training_params", {}).get("tiny_eyes", {})
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### Hiperparámetros")
-            epochs = st.number_input("Épocas", 1, 100, 10)
-            lr = st.number_input("Learning Rate", value=1e-3, format="%.1e")
-            batch_size = st.selectbox("Batch Size", [16, 32, 64], index=1)
-            
+            epochs = st.number_input("Épocas", min_value=1, max_value=1000, value=train_config.get("epochs", 50))
+            batch_size = st.number_input("Batch Size", min_value=1, max_value=128, value=train_config.get("batch_size", 32))
         with col2:
-            st.markdown("#### Callbacks & Optimizador")
-            st.info("⚡ Usamos PyTorch Lightning para gestionar el bucle de entrenamiento, checkpoints y logging automáticamente.")
-            st.markdown("- **ModelCheckpoint**: Guarda el mejor modelo basado en `val_loss`.")
-            st.markdown("- **ReduceLROnPlateau**: Reduce el LR si la loss se estanca.")
-            st.markdown("- **EarlyStopping**: Detiene si no mejora.")
+            lr = st.number_input("Learning Rate", min_value=1e-5, max_value=1e-1, value=train_config.get("lr", 1e-3), format="%.5f")
             
-            patience = st.slider("Patience (Early Stopping)", 1, 20, 10, help="Número de épocas sin mejora antes de detener.")
-            min_delta = st.slider("Min Delta (Early Stopping)", 0.0, 0.1, 0.00, step=0.001, format="%.3f", help="Mejora mínima para considerar.")
+        if st.button("🚀 Iniciar Entrenamiento por Lotes (Todos los Idiomas)", type="primary"):
+            if "training_params" not in config:
+                config["training_params"] = {}
+            config["training_params"]["tiny_eyes"] = {
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr
+            }
+            save_master_dataset_config(config)
             
-        # Selector de Idioma
-        config = load_master_dataset_config()
-        exp_config = config.get('experiment_config', {})
-        available_langs = exp_config.get('languages', ['es'])
-        
-        target_lang = st.selectbox("Idioma de Entrenamiento", available_langs, index=0)
+            from training.runner import train_recognizer
             
-        if st.button("🚀 Iniciar Entrenamiento", type="primary"):
-            run_training(epochs, lr, batch_size, patience, min_delta, target_lang)
+            st.markdown("### 📈 Progreso de Entrenamiento...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            plots_container = st.container()
+
+            for i, lang in enumerate(languages):
+                status_text.markdown(f"**Entrenando TinyEyes para {lang.upper()}... ({i+1}/{len(languages)})**")
+                
+                visual_data = config.get('visual_dataset', {}).get('generated_images', {})
+                if not visual_data:
+                    st.warning(f"Saltando {lang}: No se encontraron imágenes generadas.")
+                    continue
+                
+                with plots_container:
+                    st.markdown(f"#### Entrenamiento: {lang.upper()}")
+                    col_plot1, col_plot2 = st.columns(2)
+                    plot_loss = col_plot1.empty()
+                    plot_acc = col_plot2.empty()
+                plot_placeholders = (plot_loss, plot_acc)
+                
+                train_conf = {
+                    "epochs": epochs,
+                    "lr": lr,
+                    "batch_size": batch_size
+                }
+                
+                try:
+                    ckpt_path, hist = train_recognizer(lang, train_conf, plot_placeholders=plot_placeholders)
+                    st.success(f"✅ {lang.upper()} guardado.")
+                except Exception as e:
+                    st.error(f"❌ Error en {lang}: {e}")
+                
+                progress_bar.progress((i + 1) / len(languages))
             
-        with st.expander("💻 Ver Código de Entrenamiento (LightningModule)"):
-            st.code(get_function_source(VisualPathwayLightning), language="python")
+            st.success("🎉 Entrenamientos completados. Actualizando la interfaz en 2 segundos...")
+            import time
+            time.sleep(2)
+            st.rerun()
 
     # ==========================================
-    # TAB 3: MODELOS GUARDADOS
+    # TAB 2: RESULTADOS GLOBALES E HISTORIAL
+    # ==========================================
+    with tabs[1]:
+        st.markdown("### 🧪 Historial y Resultados Generales")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
+        else:
+            from components.analytics import plot_training_history, plot_confusion_matrix, display_classification_report, plot_latent_space_pca
+            import pickle
+            
+            st.markdown("#### 🌍 Comparativa de Rendimiento por Idioma")
+            eval_cols = st.columns(len(active_models))
+            
+            for i, (lang_eval, ckpt_info) in enumerate(active_models.items()):
+                with eval_cols[i]:
+                    st.markdown(f"## 🌍 {lang_eval.upper()}")
+                    meta = ckpt_info.get('meta', {})
+                    metrics = meta.get('metrics', {})
+                    
+                    # Métricas Rápidas
+                    acc_raw = metrics.get('val_acc') or metrics.get('val_top1') or 0.0
+                    st.metric("Val Acc", f"{format_accuracy(acc_raw):.2%}")
+                    
+                    # 1. Historial
+                    st.markdown("#### 📈 Historial")
+                    plot_training_history(meta.get('history', []))
+                    
+                    try:
+                        eval_path = Path(ckpt_info['path']).parent / "eval_results.pkl"
+                        if eval_path.exists():
+                            with open(eval_path, "rb") as f:
+                                data = pickle.load(f)
+                            
+                            # 2. Clasificación
+                            conf = data.get("confusion", {})
+                            if conf and conf.get("y_true"):
+                                st.markdown("#### 🎯 Matriz de Confusión")
+                                plot_confusion_matrix(conf["y_true"], conf["y_pred"], conf["class_names"])
+                                display_classification_report(conf["y_true"], conf["y_pred"], conf["class_names"])
+                            
+                            # 3. PCA
+                            embs = data.get("embeddings", [])
+                            labels = data.get("labels", [])
+                            if len(embs) > 0:
+                                st.markdown("#### 🌌 Espacio Latente")
+                                # Fallback robusto para nombres de clases
+                                classes_to_use = conf.get("class_names") or meta.get('config', {}).get('classes') or []
+                                if classes_to_use:
+                                    plot_latent_space_pca(embs, labels, classes_to_use)
+                                else:
+                                    st.warning("No se encontraron nombres de clases para el PCA.")
+                            
+                            # 4. Muestras
+                            samples = data.get("samples", [])
+                            if samples:
+                                st.markdown("#### 📄 Muestras Reales")
+                                for s in samples[:5]:
+                                    st.markdown(f"""
+                                    <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid #ff5e62;">
+                                        <b>Real:</b> {s['target']} | <b>Pred:</b> {s['prediction']}<br>
+                                        <small>Conf: {s.get('confidence', 0.0):.2%}</small>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        else:
+                            st.warning("⚠️ Debes re-entrenar para ver validación detallada.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    # ==========================================
+    # TAB 3: LABORATORIO INTERACTIVO
     # ==========================================
     with tabs[2]:
-        st.markdown("### 📚 Gestión de Modelos")
-        checkpoints = list_checkpoints("recognizer")
-        
-        if not checkpoints:
-            st.info("No hay modelos entrenados.")
+        st.markdown("### 🔍 Laboratorio Interactivo")
+        if not active_models:
+            st.warning("Debes entrenar los modelos primero.")
         else:
-            ckpt_opts = {f"{c['filename']} ({datetime.fromtimestamp(c['timestamp']).strftime('%Y-%m-%d %H:%M')})": c for c in checkpoints}
-            sel_ckpt_key = st.selectbox("Seleccionar Modelo para Detalles", list(ckpt_opts.keys()))
-            sel_ckpt = ckpt_opts[sel_ckpt_key]
+            lang_lab = st.selectbox("Seleccionar Idioma para Pruebas Manuales", list(active_models.keys()), key="lab_lang")
+            ckpt_lab = active_models[lang_lab]
             
-            col_info, col_actions = st.columns([3, 1])
-            with col_info:
-                st.markdown(f"**Archivo:** `{sel_ckpt['filename']}`")
-                meta = sel_ckpt.get('meta', {})
-                
-                # Configuración
-                with st.expander("⚙️ Configuración de Entrenamiento", expanded=True):
-                    st.json(meta.get('config', {}))
-                
-                # Métricas
-                metrics = meta.get('metrics', {})
-                if metrics:
-                    st.markdown("#### 📊 Métricas Finales")
-                    m_col1, m_col2, m_col3 = st.columns(3)
-                    m_col1.metric("Val Accuracy", f"{metrics.get('val_top1', 0):.2f}%")
-                    m_col2.metric("Val Loss", f"{metrics.get('val_loss', 0):.4f}")
-                    m_col3.metric("Train Loss", f"{metrics.get('train_loss', 0):.4f}")
-                    
-            with col_actions:
-                st.markdown("### Acciones")
-                if st.button("🗑️ Eliminar Modelo", key=f"del_{sel_ckpt['filename']}", type="primary"):
-                    Path(sel_ckpt['path']).unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json").unlink(missing_ok=True)
-                    Path(sel_ckpt['path']).with_suffix(".csv").unlink(missing_ok=True)
-                    st.rerun()
-            
-            st.divider()
-            
-            # --- SECCIÓN DE ANALÍTICA AVANZADA ---
-            st.markdown("### 📈 Analítica del Modelo")
-            
-            # 1. Curvas de Aprendizaje (si existen)
-            hist_path = Path(sel_ckpt['path']).with_suffix(".csv")
-            if hist_path.exists():
-                history_df = pd.read_csv(hist_path)
-                plot_learning_curves(history_df)
-            else:
-                st.info("⚠️ No hay historial de entrenamiento detallado disponible para este modelo (modelos antiguos).")
-
-            # 2. Evaluación en Validation Set
-            st.markdown("### 🧪 Evaluación Detallada")
-            st.markdown("Ejecuta una evaluación completa sobre el conjunto de validación para generar la Matriz de Confusión.")
-            
-            if st.button("🚀 Ejecutar Evaluación Completa", key=f"eval_{sel_ckpt['filename']}"):
-                with st.spinner("Cargando modelo y datos..."):
-                    # Cargar Modelo
+            if st.button(f"👁️ Cargar 1 Imagen de {lang_lab.upper()} y predecir", type="primary"):
+                with st.spinner("Inferiendo..."):
                     try:
-                        # 1. Cargar Metadata (Vocabulario y Idioma)
-                        meta_path = Path(sel_ckpt['path']).with_suffix(".ckpt.meta.json")
-                        words = []
-                        target_lang = None
+                        class_names = ckpt_lab.get('meta', {}).get('config', {}).get('classes', [])
+                        meta_config = ckpt_lab.get('meta', {}).get('config', {})
+                        model_hparams = {k: v for k, v in meta_config.items() if k in ["hidden_dim"]}
+                        if not model_hparams:
+                            model_hparams = config.get("architectures", {}).get("tiny_eyes", {})
                         
-                        if meta_path.exists():
-                            with open(meta_path) as f:
-                                meta_config = json.load(f).get("config", {})
-                                words = meta_config.get("vocab", [])
-                                target_lang = meta_config.get("language")
-                        
-                        # Fallback legacy
-                        if not target_lang:
-                            for lang in ['es', 'en', 'fr']:
-                                if f"_{lang}_" in sel_ckpt['filename']:
-                                    target_lang = lang
-                                    break
-                        
-                        if not target_lang:
-                            config = load_master_dataset_config()
-                            target_lang = config.get('experiment_config', {}).get('languages', ['es'])[0]
-                            st.warning(f"⚠️ Idioma no detectado en metadata. Usando '{target_lang}' por defecto.")
-                            
-                        # 2. Cargar Lightning Module
-                        # Primero cargamos sin num_classes para ver qué tiene el checkpoint
-                        # Pero VisualPathwayLightning requiere num_classes en __init__ si no está en hparams
-                        # Intentemos cargar confiando en hparams del checkpoint
-                        try:
-                            model = VisualPathwayLightning.load_from_checkpoint(sel_ckpt['path'])
-                        except:
-                            # Si falla, intentamos inferir o usar vocab
-                            kwargs = {"num_classes": len(words)} if words else {}
-                            model = VisualPathwayLightning.load_from_checkpoint(sel_ckpt['path'], **kwargs)
-
+                        model = TinyEyesLightning.load_from_checkpoint(
+                            ckpt_lab['path'],
+                            class_names=class_names,
+                            **model_hparams
+                        )
                         model.eval()
                         device = encontrar_device()
                         model.to(device)
                         
-                        # Verificar consistencia
-                        num_classes_model = model.hparams.num_classes
-                        if words and len(words) != num_classes_model:
-                            st.warning(f"⚠️ Mismatch: Metadata tiene {len(words)} clases, pero el modelo espera {num_classes_model}. Ignorando metadata.")
-                            words = []
-                            
-                        if not words:
-                            words = [f"Class {i}" for i in range(num_classes_model)]
-                            st.info(f"Usando etiquetas genéricas para {num_classes_model} clases.")
-                        
-                        # 3. Cargar Datos (Validation Set)
-                        st.info(f"Cargando datos de validación para idioma: {target_lang}")
                         _, _, _, loaders = build_visual_dataloaders(
-                            batch_size=32, 
-                            num_workers=0,
-                            target_language=target_lang,
-                            class_names=words
+                            batch_size=32, target_language=lang_lab, num_workers=0, seed=42
                         )
-                        val_loader = loaders['val']
                         
-                        # 4. Inferencia Loop
-                        all_preds = []
-                        all_labels = []
+                        target_class = st.selectbox("Seleccionar grafema a predecir", class_names, key=f"sel_05_{lang_lab}")
+                        target_idx = class_names.index(target_class)
                         
-                        progress_bar = st.progress(0)
-                        total_batches = len(val_loader)
-                        
-                        with torch.no_grad():
-                            for idx, batch in enumerate(val_loader):
-                                images = batch["image"].to(device)
-                                labels = batch["label"].to(device)
+                        val_ds = loaders['val'].dataset
+                        found_item = None
+                        for i in range(len(val_ds)):
+                            item = val_ds[i]
+                            if int(item["label"]) == target_idx:
+                                found_item = item
+                                break
                                 
-                                logits = model(images)
-                                preds = torch.argmax(logits, dim=1)
+                        if found_item is not None:
+                            image = found_item["image"].to(device)
+                            label = int(found_item["label"])
+                            
+                            from torchvision.transforms import ToPILImage
+                            img_pil = ToPILImage()(image.cpu())
+                            
+                            logits, _ = model.model(image.unsqueeze(0).to(device))
+                            pred = torch.argmax(logits, dim=1)[0].item()
+                            
+                            col_img, col_res = st.columns([1, 2])
+                            with col_img:
+                                st.image(img_pil, caption=f"Verdadero: {class_names[label]}")
+                            with col_res:
+                                st.markdown(f"**Verdadera Categoría:** `{class_names[label]}`")
+                                st.markdown(f"**Categoría Predicha:** `{class_names[pred]}`")
                                 
-                                all_preds.extend(preds.cpu().numpy())
-                                all_labels.extend(labels.cpu().numpy())
-                                progress_bar.progress((idx + 1) / total_batches)
-                                
-                        # Visualizar Resultados
-                        st.success("Evaluación completada.")
-                        
-                        # Matriz de Confusión
-                        st.markdown("#### Matriz de Confusión")
-                        display_labels = words
-                        
-                        # Validar rango
-                        max_label = max(all_labels) if all_labels else 0
-                        if max_label >= len(display_labels):
-                             st.error(f"❌ Error: El dataset contiene etiquetas ({max_label}) fuera del rango del modelo ({len(display_labels)-1}).")
+                                if pred == label:
+                                    st.success("¡Predicción correcta!")
+                                else:
+                                    st.warning("Predicción incorrecta.")
                         else:
-                            plot_confusion_matrix(all_labels, all_preds, display_labels)
-                            display_classification_report(all_labels, all_preds, display_labels)
-                        
+                            st.warning("No se encontraron muestras en validación.")
                     except Exception as e:
-                        st.error(f"Error durante la evaluación: {e}")
-                        st.exception(e)
+                        st.error(f"Error cargando instancia: {e}")
 
     # ==========================================
-    # TAB 4: LABORATORIO
+    # TAB 4: ARQUITECTURA
     # ==========================================
     with tabs[3]:
-        st.markdown("### 🧪 Prueba Interactiva")
-        run_laboratory()
-
-def run_training(epochs, lr, batch_size, patience, min_delta, target_language):
-    # Cargar datos
-    # Usamos build_visual_dataloaders que ya filtra por idioma y nos da las clases correctas
-    
-    with st.spinner(f"Cargando datos para idioma '{target_language}'..."):
-        # Obtener inventario de fonemas para asegurar que se incluyan grafemas como 'ch', 'll', etc.
-        from utils import get_phoneme_inventory
-        phoneme_graphemes = get_phoneme_inventory(target_language)
+        st.markdown("### 📐 Arquitectura de la Red: TinyEyes")
+        st.info("La arquitectura configurada aquí se aplica consistentemente a los tres idiomas al momento de entrenar.")
         
-        train_ds, val_ds, test_ds, loaders = build_visual_dataloaders(
-            batch_size=batch_size,
-            num_workers=0,
-            target_language=target_language,
-            whitelist_chars=phoneme_graphemes # Forzar inclusión de fonemas
-        )
-        train_loader = loaders['train']
-        val_loader = loaders['val']
+        arch_config = config.get("architectures", {}).get("tiny_eyes", {})
         
-    # Las clases son las letras/grafemas presentes en el dataset filtrado
-    words = train_ds.letters
-    
-    if not words:
-        st.error(f"No se encontraron clases visuales (letras) para el idioma {target_language}.")
-        return
-        
-    # Modelo
-    model = VisualPathwayLightning(
-        num_classes=len(words),
-        learning_rate=lr
-    )
-    
-    # Callbacks
-    early_stop_callback = EarlyStopping(
-        monitor="val_loss",
-        min_delta=min_delta,
-        patience=patience,
-        verbose=True,
-        mode="min"
-    )
-
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="models/recognizer_checkpoints",
-        filename="recognizer-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=1,
-        monitor="val_loss",
-        mode="min"
-    )
-    
-    # Trainer
-    history_cb = VisualHistoryCallback()
-    trainer = pl.Trainer(
-        max_epochs=epochs,
-        accelerator="auto",
-        devices=1,
-        callbacks=[history_cb, early_stop_callback, checkpoint_callback],
-        enable_progress_bar=True,
-        default_root_dir="lightning_logs/tiny_recognizer"
-    )
-    
-    # Placeholders para gráficas en tiempo real
-    st.markdown("### 📈 Progreso en Tiempo Real")
-    col_plot1, col_plot2 = st.columns(2)
-    with col_plot1:
-        st.markdown("#### Pérdida (Loss)")
-        plot_loss = st.empty()
-    with col_plot2:
-        st.markdown("#### Precisión (Accuracy)")
-        plot_acc = st.empty()
-        
-    realtime_cb = RealTimePlotCallback(plot_loss, plot_acc)
-    trainer.callbacks.append(realtime_cb)
-    
-    progress_bar = st.progress(0)
-    with st.spinner(f"Entrenando..."):
-        trainer.fit(model, train_loader, val_loader)
-        
-    st.success("Entrenamiento completado!")
-    
-    # Guardar
-    save_dir = Path("models/recognizer")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    final_path = save_dir / f"recognizer_{target_language}_{timestamp}.ckpt"
-    trainer.save_checkpoint(final_path)
-    
-    # Metadata
-    meta_config = {
-        "epochs": epochs, 
-        "lr": lr, 
-        "batch_size": batch_size,
-        "vocab": words,
-        "language": target_language
-    }
-    final_metrics = history_cb.history[-1] if history_cb.history else {}
-    save_model_metadata(final_path, meta_config, final_metrics)
-    
-    # Guardar historial completo para gráficas
-    if history_cb.history:
-        hist_path = final_path.with_suffix(".csv")
-        pd.DataFrame(history_cb.history).to_csv(hist_path, index=False)
-    
-    st.info(f"Modelo guardado en {final_path}")
-    
-    if history_cb.history:
-        df = pd.DataFrame(history_cb.history)
-        st.line_chart(df[['train_loss', 'val_loss']])
-        st.line_chart(df[['train_top1', 'val_top1']])
-
-def run_laboratory():
-    checkpoints = list_checkpoints("recognizer")
-    if not checkpoints:
-        st.warning("Entrena un modelo primero.")
-        return
-        
-    ckpt_opts = {c['filename']: c['path'] for c in checkpoints}
-    sel_ckpt = st.selectbox("Seleccionar Modelo", list(ckpt_opts.keys()))
-    
-    # Intentar cargar vocabulario desde metadata
-    sel_ckpt_path = ckpt_opts[sel_ckpt]
-    meta_path = Path(sel_ckpt_path).with_suffix(".ckpt.meta.json")
-    words = []
-    if meta_path.exists():
-        try:
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-            words = meta.get("config", {}).get("vocab", [])
-        except:
-            pass
-            
-    # Fallback al config global si no hay metadata
-    if not words:
-        st.warning("⚠️ No se encontró vocabulario en metadata. Intentando cargar con hiperparámetros del checkpoint...")
-    
-    if st.button("Cargar Modelo"):
-        # Si tenemos palabras (metadata), forzamos num_classes. Si no, confiamos en el checkpoint.
-        kwargs = {"num_classes": len(words)} if words else {}
-        
-        try:
-            st.session_state['recognizer_model'] = VisualPathwayLightning.load_from_checkpoint(
-                sel_ckpt_path, **kwargs
-            )
-            st.session_state['recognizer_model'].eval()
-            
-            # Si no había palabras, generar etiquetas genéricas o intentar machear con config global
-            if not words:
-                model_n = st.session_state['recognizer_model'].hparams.num_classes
-                config = load_master_dataset_config()
-                visual_cfg = config.get("visual_dataset", {})
-                generated = visual_cfg.get("generated_images", {})
-                global_words = sorted(generated.keys())
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("#### Parámetros Sistemáticos")
+            with st.form("arch_form_tiny_eyes"):
+                h_dim = st.number_input("Dimensión Oculta (hidden_dim)", min_value=64, max_value=2048, value=arch_config.get("hidden_dim", 512), step=64)
                 
-                if len(global_words) == model_n:
-                    words = global_words
-                    st.info(f"✅ Coincidencia de tamaño ({model_n}). Usando clases visuales globales.")
-                else:
-                    words = [f"Clase {i}" for i in range(model_n)]
-                    st.warning(f"⚠️ Tamaño ({model_n}) no coincide con global ({len(global_words)}). Usando etiquetas genéricas.")
-            
-            st.session_state['recognizer_vocab'] = words
-            st.success(f"Modelo cargado con {len(words)} clases!")
-            
-        except Exception as e:
-            st.error(f"Error cargando modelo: {e}")
-        
-    if 'recognizer_model' in st.session_state:
-        model_vocab = st.session_state.get('recognizer_vocab', words)
-        
-        # Seleccionar imagen del dataset visual
-        visual_dir = Path("data/visual")
-        if not visual_dir.exists():
-            st.error("No hay dataset visual.")
-            return
-            
-        # Listar algunas imágenes (aleatorias para variedad)
-        all_images = list(visual_dir.glob("**/*.png")) + list(visual_dir.glob("**/*.jpg"))
-        import random
-        random.shuffle(all_images)
-        images = all_images[:20]
-        images = sorted(images) # Ordenar la selección para que el dropdown se vea ordenado
-        
-        if not images:
-            st.error(f"No se encontraron imágenes en {visual_dir}.")
-            return
-            
-        sel_img_path = st.selectbox(f"Probar con imagen (Total encontradas: {len(list(visual_dir.glob('**/*')))})", [str(p) for p in images])
-        
-        col_img, col_pred = st.columns(2)
-        with col_img:
-            image = Image.open(sel_img_path).convert("RGB")
-            st.image(image, width=128)
-            
-        with col_pred:
-            # Preprocesar
-            from torchvision import transforms
-            transform = transforms.Compose([
-                transforms.Resize((64, 64)),
-                transforms.ToTensor()
-            ])
-            img_tensor = transform(image).unsqueeze(0)
-            
-            with torch.no_grad():
-                logits = st.session_state['recognizer_model'](img_tensor)
-                probs = torch.softmax(logits, dim=1)
-                
-            # Top 3
-            top_probs, top_idxs = torch.topk(probs[0], 3)
-            for p, idx in zip(top_probs, top_idxs):
-                # Usar vocabulario del modelo
-                if idx < len(model_vocab):
-                    w = model_vocab[idx]
-                else:
-                    w = f"Class {idx}"
-                st.write(f"**{w}**: {p:.2%}")
-                st.progress(float(p))
+                if st.form_submit_button("💾 Guardar Configuración Arquitectónica", type="primary"):
+                    if "architectures" not in config:
+                        config["architectures"] = {}
+                    config["architectures"]["tiny_eyes"] = {
+                        "hidden_dim": h_dim
+                    }
+                    save_master_dataset_config(config)
+                    st.success("Configuración global guardada para todos los idiomas.")
+                    st.rerun()
+                    
+        with col_c2:
+            st.markdown("#### Topología Base")
+            st.graphviz_chart(get_recognizer_diagram())
+
+        with st.expander("💻 Ver Código del Modelo Base"):
+            st.code(get_function_source(TinyEyes), language="python")
 
 if __name__ == "__main__":
     main()

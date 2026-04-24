@@ -14,15 +14,17 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from torchvision import transforms
 
-from models import TinyReader, PhonologicalPathway, VisualPathway, TinyReaderG2P, TinyReaderP2W
-from utils import WAV2VEC_DIM, load_wav2vec_model, get_phonemes_from_word, SoftDTW
+from models import TinyReader, TinyEars, TinyEyes, TinySpeller, TinyReaderP2W
+from utils.audio import AUDIO_EMBED_DIM
+from utils.graphemes import get_phonemes_from_word, tokenize_graphemes, get_phoneme_inventory
+from utils.plotting import SoftDTW
 from training.config import load_master_dataset_config
 
 class TinyReaderLightning(pl.LightningModule):
     """
     LightningModule para TinyReader.
-    Aprende a generar embeddings de Wav2Vec2 a partir de secuencias de logits de letras (Spelling).
-    Usa VisualPathway para "leer" las letras y PhonologicalPathway como "Oído Interno".
+    Aprende a generar representaciones auditivas a partir de secuencias de letras (Spelling).
+    Usa TinyEyes para "leer" las letras y TinyEars como "Oído Interno".
     Soporta modo Two-Stage: Grapheme -> Phoneme -> Word.
     Soporta Curriculum Training: 'g2p', 'p2w', 'end_to_end'.
     """
@@ -37,16 +39,19 @@ class TinyReaderLightning(pl.LightningModule):
         weight_decay: float = 1e-4,
         hidden_dim: int = 256,
         num_layers: int = 2,
-        w_dtw: float = 1.0,
-        w_perceptual: float = 0.5,
+        w_dtw: float = 0.0,      # Legacy
+        w_perceptual: float = 0.5, # Categorical (Cross-Entropy)
+        w_mse: float = 1.0,         # Structural (Neural Image Alignment)
         use_two_stage: bool = False,
         phoneme_listener_checkpoint_path: str = None,
+        target_language: str | None = None,
         training_phase: str = "end_to_end", # 'g2p', 'p2w', 'end_to_end'
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
 
         self.class_names = list(class_names)
+        self.class_to_idx = {name: i for i, name in enumerate(self.class_names)}
         self.use_two_stage = use_two_stage
         self.training_phase = training_phase
         
@@ -66,6 +71,12 @@ class TinyReaderLightning(pl.LightningModule):
         for p in self.listener.parameters():
             p.requires_grad = False
             
+        # --- NUEVO: Alineación de Dimensiones (Word Listener) ---
+        num_word_classes = len(self.class_names)
+        if self.listener.classifier.out_features != num_word_classes:
+            print(f"⚠️ Desajuste en Word Listener: {self.listener.classifier.out_features} clases → {num_word_classes} (Actualizando...)")
+            self.listener.update_num_classes(num_word_classes)
+
         # 1.1 Phoneme Listener (Solo si Two-Stage)
         if self.use_two_stage:
             if not phoneme_listener_checkpoint_path:
@@ -79,9 +90,36 @@ class TinyReaderLightning(pl.LightningModule):
             self.phoneme_class_names = self.phoneme_listener.class_names if hasattr(self.phoneme_listener, 'class_names') else []
             self.phoneme_to_idx = {p: i for i, p in enumerate(self.phoneme_class_names)}
             
+            # --- NUEVO: Alineación de Dimensiones (Phoneme Listener) ---
+            num_phoneme_classes = len(self.phoneme_class_names)
+            if self.phoneme_listener.classifier.out_features != num_phoneme_classes:
+                print(f"⚠️ Desajuste en Phoneme Listener: {self.phoneme_listener.classifier.out_features} clases → {num_phoneme_classes} (Actualizando...)")
+                self.phoneme_listener.update_num_classes(num_phoneme_classes)
+
             # Inicializar banco de embeddings de fonemas (Canonical Phoneme Embeddings)
             self.register_buffer("phoneme_embeddings_bank", torch.zeros(len(self.phoneme_class_names), self.phoneme_listener.hidden_dim))
             self._init_phoneme_bank()
+            
+            # --- Máscara de Aislamiento Lingüístico ---
+            if self.hparams.target_language:
+                inventory = set(get_phoneme_inventory(self.hparams.target_language))
+                mask = torch.zeros(len(self.phoneme_class_names), dtype=torch.bool)
+                for i, p in enumerate(self.phoneme_class_names):
+                    if p in inventory:
+                        mask[i] = True
+                self.register_buffer("phoneme_mask", mask)
+            else:
+                self.register_buffer("phoneme_mask", torch.ones(len(self.phoneme_class_names), dtype=torch.bool))
+
+            # --- NUEVO: Máscara de Palabras (Linguistic Isolation Stage 2) ---
+            word_mask = torch.ones(len(self.class_names), dtype=torch.bool)
+            # Para el Reader, el vocabulario ya está filtrado por idioma en el constructor (self.class_names)
+            # Pero si el listener fuera global, esto nos protege.
+            self.register_buffer("word_mask", word_mask)
+        
+        # 1.2 Word Embeddings Bank (Para la alineación estructural del Reader)
+        self.register_buffer("word_embeddings_bank", torch.zeros(len(self.class_names), self.listener.hidden_dim))
+        self._init_word_bank()
         
         # 2. Modelo Visual (Recognizer - Ojo)
         self.recognizer = self._load_recognizer(recognizer_checkpoint_path)
@@ -89,17 +127,18 @@ class TinyReaderLightning(pl.LightningModule):
         for p in self.recognizer.parameters():
             p.requires_grad = False
             
-        # Obtener dimensión de salida del recognizer (num_letters)
-        if self.recognizer.classifier:
-            input_dim = self.recognizer.classifier.out_features
+        # Obtener dimensión del espacio latente del recognizer (Neural Image)
+        if hasattr(self.recognizer, "hidden_dim"):
+            input_dim = self.recognizer.hidden_dim
         else:
-            input_dim = 26 
+            # Fallback a logits si el modelo no tiene hidden_dim definido
+            input_dim = self.recognizer.classifier.out_features if self.recognizer.classifier else 26
 
         # 3. Modelo Generativo (Reader)
         if self.use_two_stage:
             # Stage 1: Grapheme -> Phoneme
             # Output dim debe coincidir con hidden_dim del PhonemeListener (256)
-            self.reader_g2p = TinyReaderG2P(
+            self.reader_g2p = TinySpeller(
                 input_dim=input_dim,
                 hidden_dim=hidden_dim,
                 output_dim=self.phoneme_listener.hidden_dim, 
@@ -107,7 +146,7 @@ class TinyReaderLightning(pl.LightningModule):
             )
             # Stage 2: Phoneme -> Word
             # Input dim = PhonemeListener hidden dim
-            # Output dim = Word Listener hidden dim (WAV2VEC_DIM o 256)
+            # Output dim = Word Listener hidden dim (AUDIO_EMBED_DIM o 256)
             target_dim = self.listener.hidden_dim
             
             self.reader_p2w = TinyReaderP2W(
@@ -132,8 +171,9 @@ class TinyReaderLightning(pl.LightningModule):
             
         else:
             # Single Stage: Grapheme -> Word
-            target_dim = self.listener.hidden_dim # Usar hidden_dim del listener como target
-            self.reader = TinyReader(
+            target_dim = self.listener.hidden_dim
+            # Usar TinyReaderP2W para consistencia (es un integrador secuencial)
+            self.reader = TinyReaderP2W(
                 input_dim=input_dim, 
                 hidden_dim=hidden_dim,
                 num_layers=num_layers,
@@ -148,7 +188,7 @@ class TinyReaderLightning(pl.LightningModule):
     def _init_phoneme_bank(self):
         """Inicializa el banco de embeddings de fonemas usando el PhonemeListener."""
         print("Inicializando banco de embeddings de fonemas...")
-        from utils import load_waveform
+        from utils.audio import load_waveform
         
         # Cargar configuración de samples
         phoneme_samples = self.dataset_config.get("phoneme_samples", {})
@@ -205,16 +245,95 @@ class TinyReaderLightning(pl.LightningModule):
                     
         print(f"Banco de fonemas inicializado. {len(self.phoneme_class_names)} fonemas.")
 
-    def _load_recognizer(self, checkpoint_path: str) -> VisualPathway:
-        """Carga el VisualPathway desde checkpoint para usarlo como ojo."""
-        import importlib
-        RecognizerPL = importlib.import_module("training.visual_module").VisualPathwayLightning
+    def _init_word_bank(self):
+        """Inicializa el banco de embeddings de palabras usando el listener congelado."""
+        print("Inicializando banco de embeddings de palabras (Centroides)...")
+        from utils.audio import load_waveform
         
-        print(f"Cargando VisualPathway (Ojo) desde {checkpoint_path}...")
-        pl_module = RecognizerPL.load_from_checkpoint(
-            checkpoint_path,
-            map_location=self.device if hasattr(self, "device") else "cpu"
-        )
+        repo_root = Path(self.dataset_config.get("repo_root", "."))
+        device = self.device if hasattr(self, "device") else "cpu"
+        self.listener.to(device)
+        
+        with torch.no_grad():
+            for i, word in enumerate(self.class_names):
+                # Buscar directorio de la palabra en custom_dataset
+                word_dir = repo_root / "data" / "audios" / "custom_dataset" / word
+                if not word_dir.exists():
+                    continue
+                    
+                samples = list(word_dir.glob("*.wav"))
+                if not samples:
+                    continue
+                
+                # Tomar hasta 5 samples para promediar el centroide
+                selected_samples = samples[:5]
+                embeddings = []
+                
+                for s_path in selected_samples:
+                    try:
+                        waveform = load_waveform(str(s_path)).to(device)
+                        waveform = waveform.unsqueeze(0)
+                        
+                        # Extraer embedding del listener (Frozen)
+                        # (Layers, Batch, Time, Dim) -> (1, 1, T, D)
+                        emb = self.listener.extract_hidden_activations(waveform)
+                        # Pooling temporal
+                        pooled = emb.mean(dim=2).squeeze()
+                        embeddings.append(pooled)
+                    except Exception as e:
+                        print(f"Error procesando word sample {word}: {e}")
+                
+                if embeddings:
+                    avg_emb = torch.stack(embeddings).mean(dim=0)
+                    self.word_embeddings_bank[i] = avg_emb
+        
+        print(f"Banco de palabras inicializado. {len(self.class_names)} palabras.")
+
+    def _load_recognizer(self, checkpoint_path: str) -> TinyEyes:
+        """Carga TinyEyes desde checkpoint para usarlo como ojo."""
+        import importlib
+        import json
+        RecognizerPL = importlib.import_module("training.visual_module").TinyEyesLightning
+        
+        print(f"Cargando TinyEyes (Ojo) desde {checkpoint_path}...")
+        
+        # 1. Intentar obtener clases desde metadata
+        meta_path = Path(checkpoint_path).with_suffix(".ckpt.meta.json")
+        classes = None
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                classes = meta.get("config", {}).get("classes", [])
+            except Exception as e:
+                print(f"Error leyendo metadata del recognizer: {e}")
+
+        # 2. Cargar checkpoint
+        try:
+            if classes:
+                pl_module = RecognizerPL.load_from_checkpoint(
+                    checkpoint_path,
+                    class_names=classes,
+                    map_location=self.device if hasattr(self, "device") else "cpu"
+                )
+            else:
+                # Fallback sin argumentos si no hay metadata
+                pl_module = RecognizerPL.load_from_checkpoint(
+                    checkpoint_path,
+                    map_location=self.device if hasattr(self, "device") else "cpu"
+                )
+        except Exception as e:
+            # Si falla por falta de class_names, intentamos un fallback desesperado
+            print(f"Fallo carga de recognizer: {e}. Reintentando con fallback...")
+            # Aquí no tenemos una lista de grafemas a mano, 
+            # pero el recognizer suele ser standard. 
+            # El error reportado es justamente por falta de este argumento.
+            raise e
+
+        # Asegurar que el modelo tenga class_names
+        if hasattr(pl_module, 'class_names'):
+             pl_module.model.class_names = pl_module.class_names
+             
         return pl_module.model
 
     def _get_word_images(self, word: str) -> torch.Tensor:
@@ -225,10 +344,16 @@ class TinyReaderLightning(pl.LightningModule):
         images = []
         repo_root = Path(self.dataset_config.get("repo_root", "."))
         
-        # Obtener grafemas disponibles en el dataset visual
-        available_graphemes = list(self.visual_config.keys())
-        
-        from utils import tokenize_graphemes
+        # Obtener grafemas disponibles permitidos para el idioma
+        all_graphemes = list(self.visual_config.keys())
+        if self.hparams.target_language:
+            from utils.graphemes import get_language_letters
+            allowed = set(get_language_letters(self.hparams.target_language))
+            available_graphemes = [g for g in all_graphemes if g.lower() in allowed]
+        else:
+            available_graphemes = all_graphemes
+            
+        from utils.graphemes import tokenize_graphemes
         tokens = tokenize_graphemes(word, available_graphemes)
         
         for char_key in tokens:
@@ -255,12 +380,12 @@ class TinyReaderLightning(pl.LightningModule):
             
         return torch.stack(images)
 
-    def _load_listener(self, checkpoint_path: str) -> PhonologicalPathway:
-        """Carga el PhonologicalPathway desde checkpoint para usarlo como juez."""
-        from training.audio_module import PhonologicalPathwayLightning as ListenerPL
+    def _load_listener(self, checkpoint_path: str) -> TinyEars:
+        """Carga TinyEars desde checkpoint para usarlo como juez."""
+        from training.audio_module import TinyEarsLightning as ListenerPL
         import json
         
-        print(f"Cargando PhonologicalPathway desde {checkpoint_path}...")
+        print(f"Cargando TinyEars desde {checkpoint_path}...")
         
         # 1. Intentar obtener vocabulario correcto desde metadata
         meta_path = Path(checkpoint_path).with_suffix(".ckpt.meta.json")
@@ -326,153 +451,236 @@ class TinyReaderLightning(pl.LightningModule):
             return self.reader(x_seq, target_length)
 
     def _shared_step(self, batch: Dict, stage: str) -> torch.Tensor:
-        # Datos reales
-        waveforms = [w.to(self.device) for w in batch["waveforms"]]
+        # Datos comunes
         labels = batch["label"].to(self.device)
-        batch_size = len(waveforms)
-        
-        # 1. Obtener Ground Truth Embeddings (Bottom-Up)
-        with torch.no_grad():
-            waveforms_padded = pad_sequence(waveforms, batch_first=True)
-            real_embeddings = self.listener.extract_hidden_activations(waveforms_padded)
-            real_embeddings, lengths = self.listener.mask_hidden_activations(real_embeddings)
-            real_embeddings, lengths = self.listener.downsample_hidden_activations(real_embeddings, lengths, factor=7)
-            real_embeddings = real_embeddings.squeeze(0)
+        batch_size = labels.size(0)
+        is_atomic = batch.get("is_atomic", False)
+
+        # 1. Obtener Ground Truth Embeddings (Solo si no es atómico)
+        if not is_atomic:
+            waveforms = [w.to(self.device) for w in batch["waveforms"]]
+            with torch.no_grad():
+                waveforms_padded = pad_sequence(waveforms, batch_first=True)
+                real_embeddings = self.listener.extract_hidden_activations(waveforms_padded)
+                real_embeddings, lengths = self.listener.mask_hidden_activations(real_embeddings)
+                real_embeddings, lengths = self.listener.downsample_hidden_activations(real_embeddings, lengths, factor=7)
+                real_embeddings = real_embeddings.squeeze(0)
             
         # 2. Generar Imaginación (Top-Down)
-        words = [self.class_names[i] for i in labels]
+        if "label_str" in batch:
+            words = batch["label_str"]
+        else:
+            words = [self.class_names[i] for i in labels]
         
-        # A. Obtener secuencia de logits de letras (Spelling)
-        logits_sequences = []
-        for word in words:
-            images = self._get_word_images(word).to(self.device)
-            with torch.no_grad():
-                res = self.recognizer(images)
-                word_logits = res[0] if isinstance(res, tuple) else res
-            logits_sequences.append(word_logits)
+        # A. Obtener secuencia de representaciones visuales (Neural Images)
+        visual_embeddings_sequences = []
+        
+        if is_atomic:
+            # MODO ATÓMICO: Una imagen por muestra (B, 1, C, H, W)
+            images_batch = batch["image"].to(self.device)
+            # Ya viene con forma (B, 1, C, H, W) desde el collate
+            for b in range(batch_size):
+                with torch.no_grad():
+                    res = self.recognizer(images_batch[b]) # procesar la secuencia L=1
+                    word_emb = res[1] if isinstance(res, tuple) else res
+                visual_embeddings_sequences.append(word_emb)
+        elif "image" in batch:
+            images_batch = batch["image"].to(self.device) # (B, L, C, H, W)
+            for b in range(batch_size):
+                word_images = images_batch[b]
+                with torch.no_grad():
+                    res = self.recognizer(word_images)
+                    # Extraer embedding (segundo elemento)
+                    word_emb = res[1] if isinstance(res, tuple) else res
+                visual_embeddings_sequences.append(word_emb)
+        else:
+            for word in words:
+                images = self._get_word_images(word).to(self.device)
+                with torch.no_grad():
+                    res = self.recognizer(images)
+                    # Extraer embedding
+                    word_emb = res[1] if isinstance(res, tuple) else res
+                visual_embeddings_sequences.append(word_emb)
             
-        padded_logits = pad_sequence(logits_sequences, batch_first=True, padding_value=0.0)
-        max_len = real_embeddings.size(1)
+        padded_visual_embeddings = pad_sequence(visual_embeddings_sequences, batch_first=True, padding_value=0.0)
         
+        if is_atomic:
+            # En modo atómico, el entrenamiento es puramente G2P (Grapheme-to-Phoneme)
+            # targets son directamente las labels
+            phoneme_targets_padded = labels.unsqueeze(1) # (B, 1)
+            
+            # Generar Embeddings (Imaginación)
+            generated_phoneme_embeddings = self.reader_g2p(padded_visual_embeddings) # (B, 1, D)
+            
+            phoneme_targets_flat = phoneme_targets_padded.reshape(-1)
+            
+            # --- CÁLCULO DE PÉRDIDAS ---
+            # Asegurar que los índices sean válidos para el banco de embeddings (Blindaje CUDA)
+            max_idx = self.phoneme_embeddings_bank.size(0) - 1
+            labels_safe = labels.clamp(0, max_idx)
+            
+            # Detectar desajuste de datos
+            if (labels > max_idx).any():
+                print(f"⚠️ Alerta: Detectados índices de fonemas fuera de rango ({labels.max().item()} > {max_idx}). Clamping aplicado.")
+
+            # 1. Pérdida Estructural
+            target_embeddings = self.phoneme_embeddings_bank[labels_safe]
+            loss_structural = F.mse_loss(generated_phoneme_embeddings.squeeze(1), target_embeddings)
+            
+            # 2. Pérdida Categórica
+            phoneme_logits = self.phoneme_listener.classifier(generated_phoneme_embeddings)
+            phoneme_logits = torch.where(self.phoneme_mask, phoneme_logits, phoneme_logits.new_tensor(-1e9))
+            phoneme_logits_flat = phoneme_logits.view(-1, phoneme_logits.size(-1))
+            
+            # targets son directamente las labels
+            phoneme_targets_flat = labels_safe
+            loss_categorical = F.cross_entropy(phoneme_logits_flat, phoneme_targets_flat)
+            
+            total_loss = (self.hparams.w_mse * loss_structural) + (self.hparams.w_perceptual * loss_categorical)
+            
+            # Métricas
+            with torch.no_grad():
+                preds = torch.argmax(phoneme_logits_flat, dim=1)
+                acc = (preds == phoneme_targets_flat).float().mean()
+                self.log(f"{stage}_phoneme_acc", acc, prog_bar=True)
+            
+            self.log(f"{stage}_g2p_structural_mse", loss_structural)
+            self.log(f"{stage}_g2p_categorical_ce", loss_categorical)
+            self.log(f"{stage}_loss", total_loss)
+            return total_loss
+
+        # --- MODO SECUENCIAL (Reader/P2W) ---
         if self.use_two_stage:
             # --- STAGE 1: G2P ---
             
             # 1. Calcular targets (fonemas) para cada palabra
             phoneme_targets_list = []
+            
+            # Obtener inventario filtrado para tokenización precisa
+            if self.hparams.target_language:
+                from utils.graphemes import get_phoneme_inventory
+                allowed_phonemes = set(get_phoneme_inventory(self.hparams.target_language))
+                filtered_phoneme_names = [p for p in self.phoneme_class_names if p in allowed_phonemes]
+            else:
+                filtered_phoneme_names = self.phoneme_class_names
+
             for word in words:
-                phonemes = get_phonemes_from_word(word)
-                # Mapear a índices. Si no existe, 0 (pero idealmente deberíamos tener un token UNK)
-                idxs = [self.phoneme_to_idx.get(p, 0) for p in phonemes]
-                if not idxs: idxs = [0] # Evitar listas vacías
+                # Tokenizar usando el inventario filtrado para evitar crossovers lingüísticos
+                tokens = tokenize_graphemes(word.lower(), filtered_phoneme_names)
+                idxs = [self.phoneme_to_idx[t] for t in tokens if t in self.phoneme_to_idx]
+                if not idxs:
+                    # Fallback: tomar letra a letra pero comprobando la máscara
+                    idxs = []
+                    for c in word.lower():
+                        if c in self.phoneme_to_idx:
+                            idx = self.phoneme_to_idx[c]
+                            if self.phoneme_mask[idx]:
+                                idxs.append(idx)
+                    if not idxs: idxs = [0]
                 phoneme_targets_list.append(torch.tensor(idxs, device=self.device))
 
             # 2. Determinar longitud máxima para este batch
             # En G2P, queremos que el modelo genere tantos fonemas como sea necesario
-            max_target_len = max(len(t) for t in phoneme_targets_list)
-            
-            # 3. Generar Embeddings (Imaginación) con la longitud correcta
-            # Si estamos en fase P2W, no queremos gradientes en G2P
+            # 3. Generar Embeddings (Imaginación)
+            # En la nueva arquitectura, reader_g2p es un proyector frame-wise.
             if self.training_phase == "p2w":
                 with torch.no_grad():
-                    generated_phoneme_embeddings = self.reader_g2p(padded_logits, target_length=max_target_len)
+                    generated_phoneme_embeddings = self.reader_g2p(padded_visual_embeddings)
             else:
-                generated_phoneme_embeddings = self.reader_g2p(padded_logits, target_length=max_target_len)
+                generated_phoneme_embeddings = self.reader_g2p(padded_visual_embeddings)
             
-            # 4. Padear targets para coincidir con max_target_len
-            # Usamos -100 para que CrossEntropyLoss ignore el padding
+            # 4. Padear targets para coincidir con el input visual (padded_logits)
+            # El projector mantiene la longitud de la secuencia de entrada.
             phoneme_targets_padded = pad_sequence(phoneme_targets_list, batch_first=True, padding_value=-100)
             
-            # Si generated es más largo (raro si pasamos target_length), recortar targets? No, pad_sequence ya maneja max len.
-            # Pero si generated es más corto? (Imposible si pasamos target_length)
-            
-            phoneme_targets_flat = phoneme_targets_padded.view(-1)
+            # Asegurar coincidencia de longitudes si hay discrepancias de padding entre audio y visual
+            L_gen = generated_phoneme_embeddings.size(1)
+            L_tgt = phoneme_targets_padded.size(1)
+            if L_gen > L_tgt:
+                padding = torch.full((batch_size, L_gen - L_tgt), -100, device=self.device)
+                phoneme_targets_padded = torch.cat([phoneme_targets_padded, padding], dim=1)
+            elif L_tgt > L_gen:
+                phoneme_targets_padded = phoneme_targets_padded[:, :L_gen]
+
+            phoneme_targets_flat = phoneme_targets_padded.reshape(-1)
             
             # Si estamos en fase G2P, calculamos pérdida aquí y retornamos
             if self.training_phase == "g2p":
-                # A. Perceptual Phoneme Loss
+                # 1. Pérdida Estructural (MSE contra centroides)
+                mask = (phoneme_targets_padded != -100)
+                target_embeddings = self.phoneme_embeddings_bank[phoneme_targets_padded.clamp(min=0)]
+                loss_structural = F.mse_loss(generated_phoneme_embeddings[mask], target_embeddings[mask])
+                
+                # 2. Pérdida Categórica (Cross-Entropy contra el clasificador)
                 phoneme_logits = self.phoneme_listener.classifier(generated_phoneme_embeddings)
+                
+                # APLICAR MÁSCARA LINGÜÍSTICA: Invalidar fonemas fuera del idioma
+                # Usamos torch.where porque soporta broadcasting (B, T, C) vs (C)
+                # Usamos new_tensor para asegurar que coincida el dtype (fp16/fp32) y el device
+                neg_inf = phoneme_logits.new_tensor(-1e9)
+                phoneme_logits = torch.where(self.phoneme_mask, phoneme_logits, neg_inf)
+                
                 phoneme_logits_flat = phoneme_logits.view(-1, phoneme_logits.size(-1))
+                loss_categorical = F.cross_entropy(phoneme_logits_flat, phoneme_targets_flat)
                 
-                # CrossEntropyLoss ignora -100 por defecto
-                loss_perceptual_g2p = F.cross_entropy(phoneme_logits_flat, phoneme_targets_flat)
+                # 3. Combinación Híbrida
+                total_loss = (self.hparams.w_mse * loss_structural) + (self.hparams.w_perceptual * loss_categorical)
                 
-                # B. Soft-DTW Loss (usando Phoneme Bank)
-                # SoftDTW necesita secuencias alineadas o maneja longitudes variables?
-                # Nuestra implementación maneja (B, N, D) y (B, M, D).
-                # Pero necesitamos los embeddings REALES de los fonemas target.
-                # Construimos batch de embeddings reales
-                # Para padding (-100), usamos un embedding dummy (ej. ceros)
+                # Métricas de Monitoreo
+                with torch.no_grad():
+                    valid_mask_flat = phoneme_targets_flat != -100
+                    if valid_mask_flat.any():
+                        # Asegurar que no hay índices fuera de rango antes de argmax
+                        masked_logits = phoneme_logits_flat[valid_mask_flat]
+                        if masked_logits.size(0) > 0:
+                            preds = torch.argmax(masked_logits, dim=1)
+                            acc = (preds == phoneme_targets_flat[valid_mask_flat]).float().mean()
+                            self.log(f"{stage}_phoneme_acc", acc, prog_bar=True)
+
+                self.log(f"{stage}_g2p_structural_mse", loss_structural)
+                self.log(f"{stage}_g2p_categorical_ce", loss_categorical)
+                self.log(f"{stage}_loss", total_loss)
                 
-                # Crear máscara para ignorar padding en DTW si fuera necesario, 
-                # pero SoftDTW calcula distancia global.
-                # Simplemente usamos los índices válidos.
-                # Reemplazar -100 con 0 para lookup, luego enmascarar?
-                # Simplificación: Ignorar DTW para padding o usar solo Perceptual Loss si DTW es inestable.
-                # Vamos a intentar usar DTW solo en la parte válida es complejo.
-                # Por ahora, usamos Perceptual Loss como principal y DTW con targets padeados (usando embedding 0 para padding)
-                
-                targets_for_dtw = phoneme_targets_padded.clone()
-                targets_for_dtw[targets_for_dtw == -100] = 0 # Dummy index
-                real_phoneme_emb = self.phoneme_embeddings_bank[targets_for_dtw]
-                
-                # Masking DTW is hard. Let's rely on Perceptual Loss mainly.
-                # Reduce DTW weight or ignore it for now to simplify?
-                # User asked to simplify. Let's keep DTW but maybe it adds noise if padding is involved.
-                loss_dtw_g2p = self.soft_dtw(generated_phoneme_embeddings, real_phoneme_emb)
-                
-                loss_stage1 = (
-                    self.hparams.w_perceptual * loss_perceptual_g2p +
-                    self.hparams.w_dtw * loss_dtw_g2p 
-                )
-                
-                self.log(f"{stage}_g2p_perceptual", loss_perceptual_g2p)
-                self.log(f"{stage}_g2p_dtw", loss_dtw_g2p)
-                self.log(f"{stage}_loss", loss_stage1)
-                
-                # Calcular Accuracy Fonemas (ignorando padding)
-                preds = torch.argmax(phoneme_logits, dim=2)
-                mask = phoneme_targets_padded != -100
-                acc = (preds[mask] == phoneme_targets_padded[mask]).float().mean()
-                self.log(f"{stage}_phoneme_acc", acc)
-                
-                return loss_stage1
+                return total_loss
             
-            # --- STAGE 2: P2W ---
-            generated_embeddings = self.reader_p2w(generated_phoneme_embeddings, target_length=max_len)
+            # --- STAGE 2: P2W (Phoneme Sequence -> Word Vector) ---
+            # reader_p2w toma la secuencia y devuelve un ÚNICO vector de palabra.
+            generated_embeddings = self.reader_p2w(generated_phoneme_embeddings)
             
         else:
-            generated_embeddings = self.reader(padded_logits, target_length=max_len)
+            # Single Stage: Grapheme -> Word
+            # reader es un TinyReaderP2W (integrador secuencial)
+            generated_embeddings = self.reader(padded_visual_embeddings)
         
-        # 3. Calcular Pérdidas (Stage 2 o Single Stage)
+        # A. Pérdida Estructural (MSE contra centroides de palabra)
+        # Clamping defensivo para evitar CUDA device-side assert si un label está fuera de rango
+        labels_safe = labels.clamp(0, self.word_embeddings_bank.size(0) - 1)
+        target_word_embeddings = self.word_embeddings_bank[labels_safe]
+        loss_structural = F.mse_loss(generated_embeddings, target_word_embeddings)
         
-        # A. Soft-DTW Loss (Reemplaza MSE+Cosine para secuencias)
-        # No usamos mask aquí porque SoftDTW maneja secuencias de diferentes longitudes
-        loss_dtw = self.soft_dtw(generated_embeddings, real_embeddings)
+        # B. Pérdida Categórica (Cross-Entropy contra el clasificador de palabras)
+        word_logits = self.listener.classifier(generated_embeddings)
         
-        # B. Perceptual Loss (Word Level)
-        # Pooling sobre tiempo para clasificar
-        # Usamos la máscara para el pooling si las longitudes son variables
-        mask = torch.arange(max_len, device=self.device).expand(batch_size, max_len) < lengths.unsqueeze(1)
-        mask_float = mask.float().unsqueeze(-1)
-        pooled_gen = (generated_embeddings * mask_float).sum(dim=1) / mask_float.sum(dim=1).clamp(min=1e-9)
+        # Aplicar máscara de palabras (Linguistic Isolation)
+        # Usar new_tensor para compatibilidad de precisión (fp16/fp32)
+        neg_inf_word = word_logits.new_tensor(-1e9)
+        word_logits = torch.where(self.word_mask, word_logits, neg_inf_word)
         
-        listener_logits = self.listener.classifier(pooled_gen)
-        loss_perceptual = self.perceptual_loss(listener_logits, labels)
+        loss_categorical = F.cross_entropy(word_logits, labels)
         
-        # Total Loss
-        total_loss = (
-            self.hparams.w_dtw * loss_dtw + 
-            self.hparams.w_perceptual * loss_perceptual
-        )
+        # C. Combinación Híbrida
+        total_loss = (self.hparams.w_mse * loss_structural) + (self.hparams.w_perceptual * loss_categorical)
         
-        # Metrics
-        acc = (listener_logits.argmax(dim=1) == labels).float().mean()
-        
-        # Logging
+        # Logging de métricas
+        with torch.no_grad():
+            acc_word = (torch.argmax(word_logits, dim=1) == labels).float().mean()
+            self.log(f"{stage}_word_acc", acc_word, prog_bar=True)
+            # Alias genérico para la interfaz
+            self.log(f"{stage}_acc", acc_word, sync_dist=True)
+
+        self.log(f"{stage}_word_structural_mse", loss_structural)
+        self.log(f"{stage}_word_categorical_ce", loss_categorical)
         self.log(f"{stage}_loss", total_loss, prog_bar=True)
-        self.log(f"{stage}_dtw", loss_dtw)
-        self.log(f"{stage}_perceptual", loss_perceptual)
-        self.log(f"{stage}_acc", acc)
         
         return total_loss
 
@@ -493,96 +701,169 @@ class TinyReaderLightning(pl.LightningModule):
             
         try:
             with torch.no_grad():
-                waveforms = [w.to(self.device) for w in batch["waveforms"]]
+                is_atomic = batch.get("is_atomic", False)
                 labels = batch["label"].to(self.device)
                 
-                # Ground Truth info
-                waveforms_padded = pad_sequence(waveforms, batch_first=True)
-                real_embeddings = self.listener.extract_hidden_activations(waveforms_padded)
-                real_embeddings, lengths = self.listener.mask_hidden_activations(real_embeddings)
-                real_embeddings, lengths = self.listener.downsample_hidden_activations(real_embeddings, lengths, factor=7)
-                max_len = real_embeddings.size(1)
+                if not is_atomic:
+                    waveforms = [w.to(self.device) for w in batch["waveforms"]]
+                    # Ground Truth info
+                    waveforms_padded = pad_sequence(waveforms, batch_first=True)
+                    real_embeddings = self.listener.extract_hidden_activations(waveforms_padded)
+                    real_embeddings, lengths = self.listener.mask_hidden_activations(real_embeddings)
+                    real_embeddings, lengths = self.listener.downsample_hidden_activations(real_embeddings, lengths, factor=7)
+                    max_len = real_embeddings.size(1)
+                else:
+                    max_len = 1
                 
-                words = [self.class_names[i] for i in labels]
-                logits_sequences = []
-                for word in words:
-                    images = self._get_word_images(word).to(self.device)
-                    res = self.recognizer(images)
-                    word_logits = res[0] if isinstance(res, tuple) else res
-                    logits_sequences.append(word_logits)
+                # A. Obtener secuencia de representaciones visuales
+                visual_embeddings_sequences = []
                 
-                padded_logits = pad_sequence(logits_sequences, batch_first=True, padding_value=0.0)
+                if is_atomic:
+                    images_batch = batch["image"].to(self.device)
+                    # Procesar cada imagen de la secuencia L=1
+                    for b in range(len(batch["label_str"])):
+                        res = self.recognizer(images_batch[b])
+                        word_emb = res[1] if isinstance(res, tuple) else res
+                        visual_embeddings_sequences.append(word_emb)
+                    words = list(batch["label_str"])
+                else:
+                    # Modo secuencial
+                    if "label_str" in batch:
+                        words = list(batch["label_str"])
+                    else:
+                        words = [self.class_names[int(i)] for i in labels]
+                        
+                    for word in words:
+                        images = self._get_word_images(word).to(self.device)
+                        res = self.recognizer(images)
+                        word_emb = res[1] if isinstance(res, tuple) else res
+                        visual_embeddings_sequences.append(word_emb)
+                
+                padded_visual_embeddings = pad_sequence(visual_embeddings_sequences, batch_first=True, padding_value=0.0)
                 
                 if self.training_phase == "g2p":
                     # --- G2P Phase: Predecir Fonemas ---
                     
                     # 1. Calcular targets reales para determinar longitud
                     phoneme_targets_list = []
-                    for word in words:
-                        phonemes = get_phonemes_from_word(word)
-                        idxs = [self.phoneme_to_idx.get(p, 0) for p in phonemes]
-                        if not idxs: idxs = [0]
-                        phoneme_targets_list.append(idxs)
+                    
+                    # Filtramos el inventario para que coincida con el idioma actual
+                    if self.hparams.target_language:
+                        from utils.graphemes import get_phoneme_inventory
+                        allowed_phonemes = set(get_phoneme_inventory(self.hparams.target_language))
+                        filtered_phoneme_names = [p for p in self.phoneme_class_names if p in allowed_phonemes]
+                    else:
+                        filtered_phoneme_names = self.phoneme_class_names
+
+                    if is_atomic:
+                        # En modo atómico, el "word" es el grafema, y el target es el fonema único
+                        # words[b] ya es el token (ej. "sh")
+                        for word in words:
+                            idx = self.phoneme_to_idx.get(word, 0)
+                            phoneme_targets_list.append([idx])
+                    else:
+                        # Modo secuencial: Tokenizar palabras en fonemas
+                        for word in words:
+                            tokens = tokenize_graphemes(word.lower(), filtered_phoneme_names)
+                            idxs = [self.phoneme_to_idx[t] for t in tokens if t in self.phoneme_to_idx]
+                            if not idxs:
+                                idxs = []
+                                for c in word.lower():
+                                    if c in self.phoneme_to_idx:
+                                        idx = self.phoneme_to_idx[c]
+                                        # Si tenemos máscara, comprobarla
+                                        if hasattr(self, 'phoneme_mask'):
+                                            if self.phoneme_mask[idx]: idxs.append(idx)
+                                        else:
+                                            idxs.append(idx)
+                                    if not idxs: idxs = [0]
+                            phoneme_targets_list.append(idxs)
                     
                     # 2. Determinar max len real
                     max_target_len = max(len(t) for t in phoneme_targets_list)
                     
                     # 3. Generar
-                    generated_phoneme_embeddings = self.reader_g2p(padded_logits, target_length=max_target_len)
+                    # En la nueva arquitectura, reader_g2p no usa target_length
+                    generated_phoneme_embeddings = self.reader_g2p(padded_visual_embeddings)
                     
                     # Clasificar fonemas
                     phoneme_logits = self.phoneme_listener.classifier(generated_phoneme_embeddings)
+                    
+                    # APLICAR MÁSCARA LINGÜÍSTICA en la inferencia usando where (broadcasting support)
+                    if hasattr(self, 'phoneme_mask'):
+                        neg_inf = phoneme_logits.new_tensor(-1e9)
+                        phoneme_logits = torch.where(self.phoneme_mask, phoneme_logits, neg_inf)
                     
                     # Decodificar
                     probs = torch.softmax(phoneme_logits, dim=-1)
                     top1_probs, top1_indices = torch.max(probs, dim=-1) # (B, T)
                     
                     predictions = []
+                    targets = []
                     confidences = []
                     for b in range(len(words)):
                         indices = top1_indices[b]
-                        # Recortar a la longitud real del target de esta palabra?
-                        # No sabemos la longitud real durante inferencia pura, pero aquí tenemos labels.
-                        # Para visualización "honesta", mostramos todo lo que generó el modelo (hasta max_target_len).
-                        # Pero max_target_len depende del batch.
+                        target_indices = phoneme_targets_list[b]
                         
-                        phonemes = [self.phoneme_class_names[idx] for idx in indices]
-                        pred_str = " ".join(phonemes)
+                        # Recortar predicciones a la longitud del target para visualización coherente
+                        # o mostrar todo? Los targets aquí son la referencia.
+                        L_target = len(target_indices)
+                        pred_indices = indices[:L_target]
+                        
+                        pred_phonemes = [str(self.phoneme_class_names[int(idx)]) for idx in pred_indices]
+                        target_phonemes = [str(self.phoneme_class_names[int(idx)]) for idx in target_indices]
+                        
+                        pred_str = " ".join(pred_phonemes)
+                        target_str = " ".join(target_phonemes)
+                        
                         predictions.append(pred_str)
-                        confidences.append(top1_probs[b].mean().item())
+                        targets.append(target_str)
+                        confidences.append(top1_probs[b][:L_target].mean().item())
                         
-                    return words, predictions, confidences
+                    # Retornamos (Input, Predictions, Confidences, Targets, Embeddings, Labels)
+                    # Aplanamos embeddings y targets para el PCA de fonemas
+                    all_embs = []
+                    all_labs = []
+                    for b in range(len(words)):
+                        L = len(phoneme_targets_list[b])
+                        all_embs.append(generated_phoneme_embeddings[b, :L].detach())
+                        all_labs.append(torch.tensor(phoneme_targets_list[b]))
+                    
+                    final_embeddings = torch.cat(all_embs, dim=0) if all_embs else torch.empty(0)
+                    final_labels = torch.cat(all_labs, dim=0) if all_labs else torch.empty(0)
+
+                    return words, predictions, confidences, targets, final_embeddings, final_labels
 
                 else:
                     # --- P2W / End-to-End Phase: Predecir Palabras ---
                     if self.use_two_stage:
-                        # Para P2W, necesitamos generar fonemas intermedios.
-                        # Usamos una longitud fija razonable o basada en grafemas?
-                        # En inferencia real P2W, no sabemos los fonemas target.
-                        # Usamos heurística: len(grafemas) * 1.5? O simplemente len(grafemas).
-                        # Por ahora usamos len(grafemas) como aproximación.
-                        target_len_phonemes = padded_logits.size(1)
-                        phoneme_emb = self.reader_g2p(padded_logits, target_length=target_len_phonemes)
-                        generated_embeddings = self.reader_p2w(phoneme_emb, target_length=max_len)
+                        # Generar fonemas (Pointwise)
+                        phoneme_emb = self.reader_g2p(padded_visual_embeddings)
+                        # Ensamblar palabra (Sequential Assembly) -> retorna un único vector
+                        generated_embeddings = self.reader_p2w(phoneme_emb)
                     else:
-                        generated_embeddings = self.reader(padded_logits, target_length=max_len)
+                        # Integrador directo
+                        generated_embeddings = self.reader(padded_visual_embeddings)
                     
                     # Clasificar palabras
-                    mask = torch.arange(max_len, device=self.device).expand(len(waveforms), max_len) < lengths.unsqueeze(1)
-                    mask_float = mask.float().unsqueeze(-1)
-                    pooled_gen = (generated_embeddings * mask_float).sum(dim=1) / mask_float.sum(dim=1).clamp(min=1e-9)
+                    word_logits = self.listener.classifier(generated_embeddings)
+
+                    # Aplicar máscara de palabras si existe (aislamiento lingüístico)
+                    if hasattr(self, 'word_mask'):
+                        neg_inf_word = word_logits.new_tensor(-1e9)
+                        word_logits = torch.where(self.word_mask, word_logits, neg_inf_word)
                     
-                    listener_logits = self.listener.classifier(pooled_gen)
-                    
-                    # Decodificar
-                    probs = torch.softmax(listener_logits, dim=-1)
+                    # Decodificar palabra
+                    probs = torch.softmax(word_logits, dim=-1)
                     top1_probs, top1_indices = torch.max(probs, dim=-1)
                     
-                    predictions = [self.class_names[idx] for idx in top1_indices]
-                    confidences = [p.item() for p in top1_probs]
-                    
-                    return words, predictions, confidences
-                    
+                    predictions = [self.class_names[int(idx)] for idx in top1_indices]
+                    confidences = top1_probs.tolist()
+
+                    # Retornamos (Words, Predictions, Confidences, Targets (None), Embeddings, Labels)
+                    word_targets = batch["label"].cpu()
+                    return words, predictions, confidences, None, generated_embeddings.detach(), word_targets
+
         finally:
             for m, was in zip(modules_to_eval, was_training):
                 m.train(was)

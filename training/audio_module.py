@@ -1,4 +1,4 @@
-"""PyTorch Lightning module para entrenar TinyListener/TinySpeak."""
+"""PyTorch Lightning module para entrenar TinyEars."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
-from models import PhonologicalPathway
-from utils import WAV2VEC_DIM, load_wav2vec_model
+from models import TinyEars
+from utils.audio import AUDIO_EMBED_DIM
 
 
-class PhonologicalPathwayLightning(pl.LightningModule):
-    """LightningModule para entrenar PhonologicalPathway (Custom CNN+Transformer)."""
+class TinyEarsLightning(pl.LightningModule):
+    """LightningModule para entrenar TinyEars (Custom CNN+Transformer)."""
 
     def __init__(
         self,
@@ -24,28 +24,27 @@ class PhonologicalPathwayLightning(pl.LightningModule):
         hidden_dim: int = 256,
         num_conv_layers: int = 3,
         num_transformer_layers: int = 2,
+        nhead: int = 4,
         topk: Iterable[int] | None = (1, 3, 5),
-        # Argumentos legacy ignorados
-        freeze_wav2vec: bool = True, 
-        wav2vec_target_layer: int = 5,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=("class_names",))
 
         self.class_names = list(class_names)
+        self.class_to_idx = {name: i for i, name in enumerate(self.class_names)}
         if not self.class_names:
-            raise ValueError("Se requieren clases para inicializar PhonologicalPathwayLightning")
+            raise ValueError("Se requieren clases para inicializar TinyEarsLightning")
 
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.topk = tuple(sorted(set(topk or (1,))))
 
-        # Instanciar nuevo modelo custom
-        self.model = PhonologicalPathway(
+        self.model = TinyEars(
             num_classes=len(self.class_names),
             hidden_dim=hidden_dim,
             num_conv_layers=num_conv_layers,
-            num_transformer_layers=num_transformer_layers
+            num_transformer_layers=num_transformer_layers,
+            nhead=nhead
         )
 
         self._validation_buffer: List[Dict] = []
@@ -55,7 +54,7 @@ class PhonologicalPathwayLightning(pl.LightningModule):
     # Forward helpers
     # ------------------------------------------------------------------
     def forward(self, waveforms: List[torch.Tensor]) -> torch.Tensor:
-        # PhonologicalPathway espera (B, T)
+        # TinyEars espera (B, T)
         # Si viene lista de tensores, padear
         if isinstance(waveforms, list):
             from torch.nn.utils.rnn import pad_sequence
@@ -92,6 +91,9 @@ class PhonologicalPathwayLightning(pl.LightningModule):
                 on_step=False,
                 on_epoch=True,
             )
+            # Alias genérico para la interfaz
+            if k == 1:
+                self.log(f"{stage}_acc", acc, on_step=False, on_epoch=True, sync_dist=True)
 
         if stage in {"val", "test"}:
             buffer = self._validation_buffer if stage == "val" else self._test_buffer
